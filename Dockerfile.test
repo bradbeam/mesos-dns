@@ -1,0 +1,8 @@
+FROM docker-registry.core.rcsops.com/godep:1.1.0
+
+COPY ./ "$GOPATH/src/github.com/mesosphere/mesos-dns"
+
+# Only update dependencies if we are not using godep
+RUN cd "$GOPATH/src/github.com/mesosphere/mesos-dns" && ( test -d ./Godeps || echo go get -u )
+
+WORKDIR "$GOPATH/src/github.com/mesosphere/mesos-dns"
