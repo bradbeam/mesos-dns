@@ -1,0 +1,6 @@
+FROM alpine:latest
+
+COPY build/mesos-dns /mesos-dns
+RUN chmod 700 /mesos-dns
+
+ENTRYPOINT [ "/mesos-dns" ]
