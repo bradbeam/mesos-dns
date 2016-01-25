@@ -59,7 +59,7 @@ func main() {
 		select {
 		case <-reload.C:
 			rg := records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
-			err := rg.ParseState(config, masters)
+			err := rg.ParseState(config, masters...)
 
 			for _, resolver := range resolvers {
 				// TODO: Passing an error is probably not the best way to do this
@@ -74,11 +74,11 @@ func main() {
 			logging.VeryVerbose.Printf("new masters detected: %v", masters)
 
 			rg := records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
-			err := rg.ParseState(config, masters)
+			err := rg.ParseState(config, masters...)
 
 			for _, resolver := range resolvers {
-				res.SetMasters(masters)
-				res.Reload(rg, err)
+				resolver.SetMasters(masters)
+				resolver.Reload(rg, err)
 			}
 		case err := <-errch:
 			logging.Error.Fatal(err)
