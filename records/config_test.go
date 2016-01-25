@@ -21,7 +21,7 @@ func TestNewConfigValidates(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	err = validateResolvers(c.Resolvers)
+	err = validateRemoteServers(c.RemoteServers)
 	if err != nil {
 		t.Error(err)
 	}

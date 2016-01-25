@@ -1,5 +1,5 @@
 // Package resolver contains functions to handle resolving .mesos domains
-package resolver
+package builtin
 
 import (
 	"errors"
@@ -34,8 +34,9 @@ type Resolver struct {
 }
 
 // New returns a Resolver with the given version and configuration.
-func New(version string, config records.Config) *Resolver {
+func New(config records.Config, errch chan error, version string) *Resolver {
 	var recordGenerator *records.RecordGenerator
+
 	recordGenerator = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
 	r := &Resolver{
 		version: version,
@@ -52,11 +53,22 @@ func New(version string, config records.Config) *Resolver {
 		timeout = time.Duration(config.Timeout) * time.Second
 	}
 
-	rs := config.Resolvers
+	rs := config.RemoteServers
 	if !config.ExternalOn {
 		rs = rs[:0]
 	}
 	r.fwd = exchanger.NewForwarder(rs, exchangers(timeout, "udp", "tcp"))
+
+	if config.DNSOn || config.HTTPOn {
+		// launch DNS server
+		if config.DNSOn {
+			go func() { errch <- <-r.LaunchDNS() }()
+		}
+		// launch HTTP server
+		if config.HTTPOn {
+			go func() { errch <- <-r.LaunchHTTP() }()
+		}
+	}
 
 	return r
 }
@@ -141,17 +153,14 @@ func (res *Resolver) SetMasters(masters []string) {
 
 // Reload triggers a new state load from the configured mesos masters.
 // This method is not goroutine-safe.
-func (res *Resolver) Reload() {
-	t := records.NewRecordGenerator(time.Duration(res.config.StateTimeoutSeconds) * time.Second)
-	err := t.ParseState(res.config, res.masters...)
-
+func (res *Resolver) Reload(rg *records.RecordGenerator, err error) {
 	if err == nil {
 		timestamp := uint32(time.Now().Unix())
 		// may need to refactor for fairness
 		res.rsLock.Lock()
 		defer res.rsLock.Unlock()
 		atomic.StoreUint32(&res.config.SOASerial, timestamp)
-		res.rs = t
+		res.rs = rg
 	} else {
 		logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)
 	}

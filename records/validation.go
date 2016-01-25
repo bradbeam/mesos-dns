@@ -42,10 +42,10 @@ func validateMasters(ms []string) error {
 	return nil
 }
 
-// validateResolvers checks that each resolver in the list is a properly formatted IP address.
-// duplicate resolvers in the list are not allowed.
-// returns nil if the resolver list is empty, or else all resolvers in the list are valid.
-func validateResolvers(rs []string) error {
+// validateRemoteServers checks that each remote server's IP in the list is a properly
+// formatted IP address. Duplicate IPs in the list are not allowed.
+// returns nil if the remote server list is empty, or else all IPs in the list are valid.
+func validateRemoteServers(rs []string) error {
 	if len(rs) == 0 {
 		return nil
 	}
@@ -53,11 +53,11 @@ func validateResolvers(rs []string) error {
 	for _, r := range rs {
 		ip := net.ParseIP(r)
 		if ip == nil {
-			return fmt.Errorf("illegal IP specified for resolver %q", r)
+			return fmt.Errorf("illegal IP specified for remote server %q", r)
 		}
 		ipstr := ip.String()
 		if _, found := ips[ipstr]; found {
-			return fmt.Errorf("duplicate resolver IP specified: %v", r)
+			return fmt.Errorf("duplicate remote IP specified: %v", r)
 		}
 		ips[ipstr] = struct{}{}
 	}

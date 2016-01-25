@@ -1,4 +1,4 @@
-package resolver
+package builtin
 
 import (
 	"encoding/binary"
@@ -310,7 +310,8 @@ func fakeDNS() (*Resolver, error) {
 	config.RecurseOn = false
 	config.IPSources = []string{"docker", "mesos", "host"}
 
-	res := New("", config)
+	testch := make(chan error)
+	res := New(config, testch, "test")
 	res.rng.Seed(0) // for deterministic tests
 
 	b, err := ioutil.ReadFile("../factories/fake.json")
