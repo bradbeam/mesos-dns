@@ -6,6 +6,7 @@ import (
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/resolvers/builtin"
 	"github.com/mesosphere/mesos-dns/resolvers/consul"
+	"github.com/mesosphere/mesos-dns/resolvers/file"
 )
 
 type Resolver interface {
@@ -21,6 +22,8 @@ func New(config records.Config, errch chan error, version string) []Resolver {
 			resolvers = append(resolvers, consul.New(config, errch, version))
 		case "builtin":
 			resolvers = append(resolvers, builtin.New(config, errch, version))
+		case "file":
+			resolvers = append(resolvers, file.New(config, errch, version))
 		}
 	}
 
