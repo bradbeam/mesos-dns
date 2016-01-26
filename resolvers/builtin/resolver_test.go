@@ -311,10 +311,10 @@ func fakeDNS() (*Resolver, error) {
 	config.IPSources = []string{"docker", "mesos", "host"}
 
 	testch := make(chan error)
-	res := New(config, testch, "test")
+	res := New(config, testch, "0.1.1")
 	res.rng.Seed(0) // for deterministic tests
 
-	b, err := ioutil.ReadFile("../factories/fake.json")
+	b, err := ioutil.ReadFile("../../factories/fake.json")
 	if err != nil {
 		return nil, err
 	}

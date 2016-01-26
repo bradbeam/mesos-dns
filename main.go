@@ -77,7 +77,6 @@ func main() {
 			err := rg.ParseState(config, masters...)
 
 			for _, resolver := range resolvers {
-				resolver.SetMasters(masters)
 				resolver.Reload(rg, err)
 			}
 		case err := <-errch:
