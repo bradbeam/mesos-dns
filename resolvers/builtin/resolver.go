@@ -40,7 +40,7 @@ func New(config records.Config, errch chan error, version string) *Resolver {
 	recordGenerator = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
 	r := &Resolver{
 		version: version,
-		config:  config,
+		config:  config.Builtin,
 		rs:      recordGenerator,
 		// rand.Sources aren't safe for concurrent use, except the global one.
 		// See: https://github.com/golang/go/issues/3611

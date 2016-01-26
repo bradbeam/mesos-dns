@@ -6,7 +6,7 @@ import (
 )
 
 func validateEnabledServices(c *Config) error {
-	if !c.DNSOn && !c.HTTPOn {
+	if !c.Builtin.DNSOn && !c.HTTPOn {
 		return fmt.Errorf("Either DNS or HTTP server should be on")
 	}
 	if len(c.Masters) == 0 && c.Zk == "" {

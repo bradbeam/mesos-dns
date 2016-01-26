@@ -4,13 +4,14 @@ import (
 	"strings"
 
 	"github.com/mesosphere/mesos-dns/records"
+	"github.com/mesosphere/mesos-dns/resolvers/bind"
 	"github.com/mesosphere/mesos-dns/resolvers/builtin"
 	"github.com/mesosphere/mesos-dns/resolvers/consul"
-	"github.com/mesosphere/mesos-dns/resolvers/file"
 )
 
 type Resolver interface {
 	Reload(rg *records.RecordGenerator, err error)
+	// Probably want to add a config tostring
 }
 
 func New(config records.Config, errch chan error, version string) []Resolver {
@@ -22,8 +23,8 @@ func New(config records.Config, errch chan error, version string) []Resolver {
 			resolvers = append(resolvers, consul.New(config, errch, version))
 		case "builtin":
 			resolvers = append(resolvers, builtin.New(config, errch, version))
-		case "file":
-			resolvers = append(resolvers, file.New(config, errch, version))
+		case "bind":
+			resolvers = append(resolvers, bind.New(config, errch, version))
 		}
 	}
 
