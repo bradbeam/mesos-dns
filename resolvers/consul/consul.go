@@ -1,10 +1,13 @@
 package consul
 
 import (
+	"log"
+	"strconv"
 	"strings"
 
 	consul "github.com/hashicorp/consul/api"
 	"github.com/mesosphere/mesos-dns/records"
+	"github.com/mesosphere/mesos-dns/records/state"
 	consulconfig "github.com/mesosphere/mesos-dns/resolvers/consul/config"
 )
 
@@ -63,8 +66,8 @@ func (c *ConsulBackend) connectAgents() error {
 
 	for _, agent := range members {
 		// Test connection to each agent and reconnect as needed
-		if _, ok := c.Agents[agent.Name]; ok {
-			_, err := c.Agents[agent.Name].Self()
+		if _, ok := c.Agents[agent.Addr]; ok {
+			_, err := c.Agents[agent.Addr].Self()
 			if err == nil {
 				continue
 			} else {
@@ -85,7 +88,7 @@ func (c *ConsulBackend) connectAgents() error {
 			// Dump agent?
 			return err
 		} else {
-			c.Agents[agent.Name] = client.Agent()
+			c.Agents[agent.Addr] = client.Agent()
 		}
 
 	}
@@ -123,25 +126,52 @@ func (c *ConsulBackend) insertMasterRecords(rg *records.RecordGenerator) {
 	}
 
 }
+*/
 
-func (c *ConsulBackend) insertSlaveRecords(rg *records.RecordGenerator) {
-	// Note:
-	// We'll want to look at using the TTL portion of checks
-	// to take care of obsoleting old records
-	serviceprefix := "mesosdns"
-	for _, slave := range rg.Slaves {
-		err := agent.ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      serviceprefix + "-" + slave.Name,
-			Name:    slave.Name,
-			Port:    slave.Port,
-			Address: slave.Address,
-			Check:   &consul.AgentServiceCheck{},
+func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
+	serviceprefix := "mesos-dns"
+	for _, slave := range slaves {
+		port, err := strconv.Atoi(slave.PID.Port)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		if _, ok := c.Agents[slave.PID.Host]; !ok {
+			log.Println("Unknown consul agent", slave.PID.Host)
+			continue
+		}
+
+		// Add slave to the pool of slaves
+		// slave.service.consul
+		err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+			ID:      serviceprefix + ":" + slave.ID,
+			Name:    "slave.mesos",
+			Port:    port,
+			Address: slave.PID.Host,
 		})
-		// Update TTL for record/service
+
+		if err != nil {
+			log.Println(err)
+		}
+
+		// Create a way to lookup the local slave entry
+		// local.slave.service.consul
+		err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+			ID:      serviceprefix + ":local-" + slave.ID,
+			Name:    "local.slave",
+			Port:    port,
+			Address: slave.PID.Host,
+		})
+
+		if err != nil {
+			log.Println(err)
+		}
 	}
 
 }
 
+/*
 func (c *ConsulBackend) insertFrameworkRecords(rg *records.RecordGenerator) {
 	// Note:
 	// We'll want to look at using the TTL portion of checks
