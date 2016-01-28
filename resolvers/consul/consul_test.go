@@ -3,7 +3,6 @@ package consul
 import (
 	"encoding/json"
 	"io/ioutil"
-	"log"
 	"os"
 	"testing"
 
@@ -117,16 +116,89 @@ func TestSlaveRecords(t *testing.T) {
 			t.Log(err)
 			continue
 		}
-		for name, service := range services {
-			log.Println("Name:", name)
-			log.Println("ID:", service.ID)
-			log.Println("Service:", service.Service)
-			log.Println("Address:", service.Address)
-			log.Println("Port:", service.Port)
+
+		// This should only be two, but since consul registers itself, it's included
+		if len(services) != 3 {
+			t.Log("Did not get back 3 services. Got back", len(services))
 		}
+		/*
+			for name, service := range services {
+				log.Println("Name:", name)
+				log.Println("ID:", service.ID)
+				log.Println("Service:", service.Service)
+				log.Println("Address:", service.Address)
+				log.Println("Port:", service.Port)
+			}
+		*/
 	}
 }
 
+func TestMasterRecords(t *testing.T) {
+	sj := loadState(t)
+
+	_, server := makeClientServer(t)
+	defer server.Stop()
+
+	// Let's try to have fun with consul config
+	os.Setenv("CONSUL_HTTP_ADDR", server.HTTPAddr)
+	defer os.Setenv("CONSUL_HTTP_ADDR", "")
+
+	config := records.NewConfig()
+	errch := make(chan error)
+	version := "1.0"
+
+	// Hopefully the ENV vars above should allow us
+	// to override the defaults
+	backend := New(config, errch, version)
+	_, err := backend.Client.Agent().Self()
+	if err != nil {
+		t.Error("Failed to get consul client initialized")
+	}
+
+	err = backend.connectAgents()
+	if err != nil {
+		t.Log(err)
+	}
+
+	rg := &records.RecordGenerator{State: sj}
+
+	// :D
+	// Do this for testing so we can have
+	// a consul agent ( our dummy test server )
+	// running on the same host as the mesos process
+	for _, slave := range rg.State.Slaves {
+		slave.PID.Host = "127.0.0.1"
+	}
+	rg.State.Leader = "master@127.0.0.1:5050"
+
+	backend.insertMasterRecords(rg.State.Slaves, rg.State.Leader)
+
+	// Should make a little more programmatic test
+	for _, agent := range backend.Agents {
+		services, err := agent.Services()
+		if err != nil {
+			t.Log(err)
+			continue
+		}
+
+		// 3x Master
+		// 1x leader
+		// 1x consul
+		if len(services) != 5 {
+			t.Log("Did not get back 5 services. Got back", len(services))
+		}
+
+		/*
+			for name, service := range services {
+				log.Println("Name:", name)
+				log.Println("ID:", service.ID)
+				log.Println("Service:", service.Service)
+				log.Println("Address:", service.Address)
+				log.Println("Port:", service.Port)
+			}
+		*/
+	}
+}
 func makeClientServer(t *testing.T) (*api.Client, *testutil.TestServer) {
 
 	// Make client config
@@ -152,7 +224,7 @@ func makeClientServer(t *testing.T) (*api.Client, *testutil.TestServer) {
 
 func loadState(t *testing.T) state.State {
 	var sj state.State
-	b, err := ioutil.ReadFile("../../factories/fake.json")
+	b, err := ioutil.ReadFile("../../factories/state.json")
 	if err != nil {
 		t.Fatal(err)
 	} else if err = json.Unmarshal(b, &sj); err != nil {

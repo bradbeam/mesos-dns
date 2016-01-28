@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	consul "github.com/hashicorp/consul/api"
+	"github.com/mesos/mesos-go/upid"
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/records/state"
 	consulconfig "github.com/mesosphere/mesos-dns/resolvers/consul/config"
@@ -39,16 +40,8 @@ func (c *ConsulBackend) Reload(rg *records.RecordGenerator, err error) {
 	c.connectAgents()
 
 	// Going on the assumption of revamped rg structs
-	// Want to create
-	// leader.mesos.service.consul
-	// master.mesos.service.consul
-	// slave.mesos.service.consul
-	// marathon.service.consul
-	// task.marathon.service.consul
-	// task.slave.service.consul
-
 	//	c.insertMasterRecords(rg)
-	//	c.insertSlaveRecords(rg)
+	c.insertSlaveRecords(rg.State.Slaves)
 }
 
 func (c *ConsulBackend) connectAgents() error {
@@ -99,6 +92,10 @@ func (c *ConsulBackend) connectAgents() error {
 func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 	serviceprefix := "mesos-dns"
 	for _, slave := range slaves {
+		if slave.Attrs.Master == "true" {
+			// Master node, so skip
+			continue
+		}
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
 			log.Println(err)
@@ -111,7 +108,7 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 		}
 
 		// Add slave to the pool of slaves
-		// slave.service.consul
+		// slave.mesos.service.consul
 		err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
 			ID:      serviceprefix + ":" + slave.ID,
 			Name:    "slave.mesos",
@@ -123,17 +120,105 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 			log.Println(err)
 		}
 
-		// Create a way to lookup the local slave entry
-		// local.slave.service.consul
-		err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      serviceprefix + ":local-" + slave.ID,
-			Name:    "local.slave",
-			Port:    port,
-			Address: slave.PID.Host,
-		})
+		// Need to rethink this
+		// Maybe <hostname>.slave.mesos? idk
+		// but record will be distributed among consul agents
+		// so having local.x is kind of pointless as it'll be
+		// the same as slave.mesos
+		/*
+			// Create a way to lookup the local slave entry
+			// local.slave.mesos.service.consul
+			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+				ID:      serviceprefix + ":local-" + slave.ID,
+				Name:    "local.slave.mesos",
+				Port:    port,
+				Address: slave.PID.Host,
+			})
 
+			if err != nil {
+				log.Println(err)
+			}
+		*/
+	}
+
+}
+
+func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string) {
+	// Create a bogus Slave struct for the leader
+	// master@10.10.10.8:5050
+	lead := state.Slave{
+		ID:       leader,
+		Hostname: leader,
+		PID: state.PID{
+			&upid.UPID{
+				Host: strings.Split(strings.Split(leader, "@")[1], ":")[0],
+				Port: strings.Split(strings.Split(leader, "@")[1], ":")[1],
+			},
+		},
+		Attrs: state.Attributes{
+			Master: "true",
+		},
+		Active: true,
+	}
+	slaves = append(slaves, lead)
+	serviceprefix := "mesos-dns"
+	for _, slave := range slaves {
+		if slave.Attrs.Master == "false" {
+			// Slave node
+			continue
+		}
+		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
 			log.Println(err)
+			continue
+		}
+
+		if _, ok := c.Agents[slave.PID.Host]; !ok {
+			log.Println("Unknown consul agent", slave.PID.Host)
+			continue
+		}
+
+		if slave.ID == leader {
+			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+				ID:      serviceprefix + ":" + slave.ID,
+				Name:    "leader.mesos",
+				Port:    port,
+				Address: slave.PID.Host,
+			})
+
+		} else {
+			// Add slave to the pool of masters
+			// master.mesos.service.consul
+			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+				ID:      serviceprefix + ":" + slave.ID,
+				Name:    "master.mesos",
+				Port:    port,
+				Address: slave.PID.Host,
+			})
+
+			if err != nil {
+				log.Println(err)
+			}
+
+			// Need to rethink this
+			// Maybe <hostname>.slave.mesos? idk
+			// but record will be distributed among consul agents
+			// so having local.x is kind of pointless as it'll be
+			// the same as slave.mesos
+			/*
+				// Create a way to lookup the local slave entry
+				// local.master.mesos.service.consul
+				err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+					ID:      serviceprefix + ":local-" + slave.ID,
+					Name:    "local.master.mesos",
+					Port:    port,
+					Address: slave.PID.Host,
+				})
+
+				if err != nil {
+					log.Println(err)
+				}
+			*/
 		}
 	}
 
