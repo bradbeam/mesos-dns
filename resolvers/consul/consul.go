@@ -1,7 +1,7 @@
 package consul
 
 import (
-	"strconv"
+	"strings"
 
 	consul "github.com/hashicorp/consul/api"
 	"github.com/mesosphere/mesos-dns/records"
@@ -10,11 +10,13 @@ import (
 
 type ConsulBackend struct {
 	Client *consul.Client
+	Config *consul.Config
 	Agents map[string]*consul.Agent
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
-	client, err := consul.NewClient(consulconfig.NewConfig())
+	cfg := consulconfig.NewConfig()
+	client, err := consul.NewClient(cfg)
 	if err != nil {
 		errch <- err
 		return &ConsulBackend{}
@@ -22,6 +24,7 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 
 	return &ConsulBackend{
 		Client: client,
+		Config: cfg,
 		Agents: make(map[string]*consul.Agent),
 	}
 
@@ -45,41 +48,49 @@ func (c *ConsulBackend) Reload(rg *records.RecordGenerator, err error) {
 	//	c.insertSlaveRecords(rg)
 }
 
-func (c *ConsulBackend) connectAgents() {
+func (c *ConsulBackend) connectAgents() error {
+	// Only get LAN members
 	members, err := c.Client.Agent().Members(false)
 	if err != nil {
 		// Do something
+		return err
 	}
-	// Only get LAN members
-	for _, agent := range members {
 
-		// Not sure what agent.Name translates to; may want to
-		// switch up to agent.Address
+	// Since the consul api is dumb and wont return the http port
+	// we'll assume all agents are running on the same port as
+	// the initially specified consul server
+	port := strings.Split(c.Config.Address, ":")[1]
+
+	for _, agent := range members {
 		// Test connection to each agent and reconnect as needed
 		if _, ok := c.Agents[agent.Name]; ok {
 			_, err := c.Agents[agent.Name].Self()
 			if err == nil {
 				continue
+			} else {
+				return err
 			}
 		}
 		cfg := consulconfig.NewConfig()
-		cfg.Address = agent.Addr + ":" + strconv.Itoa(int(agent.Port))
+		cfg.Address = agent.Addr + ":" + port
 		client, err := consul.NewClient(cfg)
 		if err != nil {
 			// How do we want to handle consul agent not being responsive
-
+			return err
 		}
 
 		// Do a sanity check that we are connected to agent
 		_, err = client.Agent().Self()
 		if err != nil {
 			// Dump agent?
+			return err
 		} else {
 			c.Agents[agent.Name] = client.Agent()
 		}
 
 	}
 
+	return nil
 }
 
 /*
