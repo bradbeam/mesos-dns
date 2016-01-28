@@ -88,7 +88,7 @@ func makeClientServer(t *testing.T) *testutil.TestServer {
 
 func loadState(t *testing.T) state.State {
 	var sj state.State
-	b, err := ioutil.ReadFile("../../factories/state.json")
+	b, err := ioutil.ReadFile("test/state.json")
 	if err != nil {
 		t.Fatal(err)
 	} else if err = json.Unmarshal(b, &sj); err != nil {
