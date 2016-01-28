@@ -13,58 +13,18 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	_, server := makeClientServer(t)
+	server, _ := backendSetup(t)
 	defer server.Stop()
-	// Let's try to have fun with consul config
-	os.Setenv("CONSUL_HTTP_ADDR", server.HTTPAddr)
-	defer os.Setenv("CONSUL_HTTP_ADDR", "")
-
-	config := records.NewConfig()
-	errch := make(chan error)
-	version := "1.0"
-
-	// Hopefully the ENV vars above should allow us
-	// to override the defaults
-	backend := New(config, errch, version)
-	_, err := backend.Client.Agent().Self()
-	if err != nil {
-		t.Error("Failed to get consul client initialized")
-	}
 }
 
 func TestConnectAgents(t *testing.T) {
-	_, server := makeClientServer(t)
+	server, backend, _ := recordSetup(t)
 	defer server.Stop()
-
-	// Let's try to have fun with consul config
-	os.Setenv("CONSUL_HTTP_ADDR", server.HTTPAddr)
-	defer os.Setenv("CONSUL_HTTP_ADDR", "")
-
-	config := records.NewConfig()
-	errch := make(chan error)
-	version := "1.0"
-
-	// Hopefully the ENV vars above should allow us
-	// to override the defaults
-	backend := New(config, errch, version)
-	_, err := backend.Client.Agent().Self()
-	if err != nil {
-		t.Error("Failed to get consul client initialized")
-	}
-
-	err = backend.connectAgents()
-	if err != nil {
-		t.Log(err)
-	}
-
-	if len(backend.Agents) != 1 {
-		t.Error("Failed to get agent connection")
-	}
 
 	// Let's see what happens the second time
 	// It should just return early since the agent already
 	// exists in our list of agents
-	err = backend.connectAgents()
+	err := backend.connectAgents()
 	if err != nil {
 		t.Log(err)
 	}
@@ -76,130 +36,40 @@ func TestConnectAgents(t *testing.T) {
 }
 
 func TestSlaveRecords(t *testing.T) {
-	sj := loadState(t)
-
-	_, server := makeClientServer(t)
+	server, backend, sj := recordSetup(t)
 	defer server.Stop()
 
-	// Let's try to have fun with consul config
-	os.Setenv("CONSUL_HTTP_ADDR", server.HTTPAddr)
-	defer os.Setenv("CONSUL_HTTP_ADDR", "")
+	backend.insertSlaveRecords(sj.Slaves)
 
-	config := records.NewConfig()
-	errch := make(chan error)
-	version := "1.0"
-
-	// Hopefully the ENV vars above should allow us
-	// to override the defaults
-	backend := New(config, errch, version)
-	_, err := backend.Client.Agent().Self()
-	if err != nil {
-		t.Error("Failed to get consul client initialized")
-	}
-
-	err = backend.connectAgents()
-	if err != nil {
-		t.Log(err)
-	}
-
-	rg := &records.RecordGenerator{State: sj}
-	// :D
-	for _, slave := range rg.State.Slaves {
-		slave.PID.Host = "127.0.0.1"
-	}
-	backend.insertSlaveRecords(rg.State.Slaves)
-
-	// Should make a little more programmatic test
-	for _, agent := range backend.Agents {
-		services, err := agent.Services()
-		if err != nil {
-			t.Log(err)
-			continue
-		}
-
-		// This should only be two, but since consul registers itself, it's included
-		if len(services) != 3 {
-			t.Log("Did not get back 3 services. Got back", len(services))
-		}
-		/*
-			for name, service := range services {
-				log.Println("Name:", name)
-				log.Println("ID:", service.ID)
-				log.Println("Service:", service.Service)
-				log.Println("Address:", service.Address)
-				log.Println("Port:", service.Port)
-			}
-		*/
-	}
+	// 2x Slaves
+	// 1x Consul
+	validateRecords(t, backend, 3)
 }
 
 func TestMasterRecords(t *testing.T) {
-	sj := loadState(t)
-
-	_, server := makeClientServer(t)
+	server, backend, sj := recordSetup(t)
 	defer server.Stop()
 
-	// Let's try to have fun with consul config
-	os.Setenv("CONSUL_HTTP_ADDR", server.HTTPAddr)
-	defer os.Setenv("CONSUL_HTTP_ADDR", "")
+	backend.insertMasterRecords(sj.Slaves, sj.Leader)
 
-	config := records.NewConfig()
-	errch := make(chan error)
-	version := "1.0"
-
-	// Hopefully the ENV vars above should allow us
-	// to override the defaults
-	backend := New(config, errch, version)
-	_, err := backend.Client.Agent().Self()
-	if err != nil {
-		t.Error("Failed to get consul client initialized")
-	}
-
-	err = backend.connectAgents()
-	if err != nil {
-		t.Log(err)
-	}
-
-	rg := &records.RecordGenerator{State: sj}
-
-	// :D
-	// Do this for testing so we can have
-	// a consul agent ( our dummy test server )
-	// running on the same host as the mesos process
-	for _, slave := range rg.State.Slaves {
-		slave.PID.Host = "127.0.0.1"
-	}
-	rg.State.Leader = "master@127.0.0.1:5050"
-
-	backend.insertMasterRecords(rg.State.Slaves, rg.State.Leader)
-
-	// Should make a little more programmatic test
-	for _, agent := range backend.Agents {
-		services, err := agent.Services()
-		if err != nil {
-			t.Log(err)
-			continue
-		}
-
-		// 3x Master
-		// 1x leader
-		// 1x consul
-		if len(services) != 5 {
-			t.Log("Did not get back 5 services. Got back", len(services))
-		}
-
-		/*
-			for name, service := range services {
-				log.Println("Name:", name)
-				log.Println("ID:", service.ID)
-				log.Println("Service:", service.Service)
-				log.Println("Address:", service.Address)
-				log.Println("Port:", service.Port)
-			}
-		*/
-	}
+	// 3x Master
+	// 1x Leader
+	// 1x Consul
+	validateRecords(t, backend, 5)
 }
-func makeClientServer(t *testing.T) (*api.Client, *testutil.TestServer) {
+
+func TestFrameworkRecords(t *testing.T) {
+	server, backend, sj := recordSetup(t)
+	defer server.Stop()
+
+	backend.insertFrameworkRecords(sj.Frameworks)
+
+	// 1x Marathon
+	// 1x Consul
+	validateRecords(t, backend, 2)
+}
+
+func makeClientServer(t *testing.T) *testutil.TestServer {
 
 	// Make client config
 	conf := api.DefaultConfig()
@@ -213,13 +83,7 @@ func makeClientServer(t *testing.T) (*api.Client, *testutil.TestServer) {
 	})
 	conf.Address = server.HTTPAddr
 
-	// Create client
-	client, err := api.NewClient(conf)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-
-	return client, server
+	return server
 }
 
 func loadState(t *testing.T) state.State {
@@ -232,4 +96,65 @@ func loadState(t *testing.T) state.State {
 	}
 
 	return sj
+}
+
+func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
+	server := makeClientServer(t)
+
+	// Let's try to have fun with consul config
+	os.Setenv("CONSUL_HTTP_ADDR", server.HTTPAddr)
+	defer os.Setenv("CONSUL_HTTP_ADDR", "")
+
+	config := records.NewConfig()
+	errch := make(chan error)
+	version := "1.0"
+
+	// Hopefully the ENV vars above should allow us
+	// to override the defaults
+	backend := New(config, errch, version)
+	_, err := backend.Client.Agent().Self()
+	if err != nil {
+		t.Error("Failed to get consul client initialized")
+	}
+	return server, backend
+}
+
+func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend, state.State) {
+	sj := loadState(t)
+
+	server, backend := backendSetup(t)
+	err := backend.connectAgents()
+	if err != nil {
+		t.Error("Issue connecting to agents.", err)
+	}
+
+	rg := &records.RecordGenerator{State: sj}
+
+	// :D
+	// Do this for testing so we can have
+	// a consul agent ( our dummy test server )
+	// running on the same host as the mesos process
+	for _, slave := range rg.State.Slaves {
+		slave.PID.Host = "127.0.0.1"
+	}
+	rg.State.Leader = "master@127.0.0.1:5050"
+	rg.State.Frameworks[0].PID.Host = "127.0.0.1"
+
+	return server, backend, rg.State
+}
+
+func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
+	// Should make a little more programmatic test
+	for _, agent := range backend.Agents {
+		services, err := agent.Services()
+		if err != nil {
+			t.Error("Unable to get list of services back from agent.", err)
+			return
+		}
+
+		if len(services) != expected {
+			t.Error("Did not get back", expected, "services. Got back", len(services))
+		}
+	}
+
 }

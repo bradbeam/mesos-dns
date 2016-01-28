@@ -13,9 +13,10 @@ import (
 )
 
 type ConsulBackend struct {
-	Client *consul.Client
-	Config *consul.Config
-	Agents map[string]*consul.Agent
+	Client    *consul.Client
+	AgentPort string
+	Config    *consul.Config
+	Agents    map[string]*consul.Agent
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
@@ -26,10 +27,16 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 		return &ConsulBackend{}
 	}
 
+	// Since the consul api is dumb and wont return the http port
+	// we'll assume all agents are running on the same port as
+	// the initially specified consul server
+	port := strings.Split(cfg.Address, ":")[1]
+
 	return &ConsulBackend{
-		Client: client,
-		Config: cfg,
-		Agents: make(map[string]*consul.Agent),
+		Client:    client,
+		Config:    cfg,
+		AgentPort: port,
+		Agents:    make(map[string]*consul.Agent),
 	}
 
 }
@@ -40,8 +47,9 @@ func (c *ConsulBackend) Reload(rg *records.RecordGenerator, err error) {
 	c.connectAgents()
 
 	// Going on the assumption of revamped rg structs
-	//	c.insertMasterRecords(rg)
+	c.insertMasterRecords(rg.State.Slaves, rg.State.Leader)
 	c.insertSlaveRecords(rg.State.Slaves)
+	c.insertFrameworkRecords(rg.State.Frameworks)
 }
 
 func (c *ConsulBackend) connectAgents() error {
@@ -51,11 +59,6 @@ func (c *ConsulBackend) connectAgents() error {
 		// Do something
 		return err
 	}
-
-	// Since the consul api is dumb and wont return the http port
-	// we'll assume all agents are running on the same port as
-	// the initially specified consul server
-	port := strings.Split(c.Config.Address, ":")[1]
 
 	for _, agent := range members {
 		// Test connection to each agent and reconnect as needed
@@ -68,7 +71,7 @@ func (c *ConsulBackend) connectAgents() error {
 			}
 		}
 		cfg := consulconfig.NewConfig()
-		cfg.Address = agent.Addr + ":" + port
+		cfg.Address = agent.Addr + ":" + c.AgentPort
 		client, err := consul.NewClient(cfg)
 		if err != nil {
 			// How do we want to handle consul agent not being responsive
@@ -222,6 +225,37 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 		}
 	}
 
+}
+
+func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
+	serviceprefix := "mesos-dns"
+	for _, framework := range frameworks {
+
+		// task, pid, name, hostname
+		port, err := strconv.Atoi(framework.PID.Port)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		if _, ok := c.Agents[framework.PID.Host]; !ok {
+			log.Println("Unknown consul agent", framework.PID.Host)
+			continue
+		}
+
+		// Add slave to the pool of slaves
+		// slave.mesos.service.consul
+		err = c.Agents[framework.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+			ID:      serviceprefix + ":" + framework.Name,
+			Name:    framework.Name,
+			Port:    port,
+			Address: framework.PID.Host,
+		})
+
+		if err != nil {
+			log.Println(err)
+		}
+	}
 }
 
 /*
