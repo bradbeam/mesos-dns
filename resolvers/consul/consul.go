@@ -13,10 +13,11 @@ import (
 )
 
 type ConsulBackend struct {
-	Client    *consul.Client
-	AgentPort string
-	Config    *consul.Config
 	Agents    map[string]*consul.Agent
+	AgentPort string
+	Client    *consul.Client
+	Config    *consul.Config
+	SlaveIDIP map[string]string
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
@@ -33,10 +34,11 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 	port := strings.Split(cfg.Address, ":")[1]
 
 	return &ConsulBackend{
+		Agents:    make(map[string]*consul.Agent),
+		AgentPort: port,
 		Client:    client,
 		Config:    cfg,
-		AgentPort: port,
-		Agents:    make(map[string]*consul.Agent),
+		SlaveIDIP: make(map[string]string),
 	}
 
 }
@@ -95,10 +97,6 @@ func (c *ConsulBackend) connectAgents() error {
 func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 	serviceprefix := "mesos-dns"
 	for _, slave := range slaves {
-		if slave.Attrs.Master == "true" {
-			// Master node, so skip
-			continue
-		}
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
 			log.Println(err)
@@ -109,6 +107,10 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 			log.Println("Unknown consul agent", slave.PID.Host)
 			continue
 		}
+
+		// We'll need this for service registration to the appropriate
+		// slaves
+		c.SlaveIDIP[slave.ID] = slave.PID.Host
 
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
