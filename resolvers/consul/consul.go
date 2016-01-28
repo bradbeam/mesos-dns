@@ -96,38 +96,6 @@ func (c *ConsulBackend) connectAgents() error {
 	return nil
 }
 
-/*
-func (c *ConsulBackend) insertMasterRecords(rg *records.RecordGenerator) {
-	// Note:
-	// We'll want to look at using the TTL portion of checks
-	// to take care of obsoleting old records
-	serviceprefix := "mesosdns"
-	for _, master := range rg.Masters {
-
-		err := agent.ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      serviceprefix + "-" + master.Name,
-			Name:    master.Name,
-			Port:    master.Port,
-			Address: master.Address,
-			Check:   &consul.AgentServiceCheck{},
-		})
-		if master.Leader {
-			// Probably need to massage this a little
-			err = agent.ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      serviceprefix + "-leader-" + master.Name,
-				Name:    "leader" + master.Name,
-				Port:    master.Port,
-				Address: master.Address,
-				Check:   &consul.AgentServiceCheck{},
-			})
-		}
-
-		// Update TTL for record/service
-	}
-
-}
-*/
-
 func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 	serviceprefix := "mesos-dns"
 	for _, slave := range slaves {
@@ -172,6 +140,36 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 }
 
 /*
+func (c *ConsulBackend) insertMasterRecords(rg *records.RecordGenerator) {
+	// Note:
+	// We'll want to look at using the TTL portion of checks
+	// to take care of obsoleting old records
+	serviceprefix := "mesosdns"
+	for _, master := range rg.Masters {
+
+		err := agent.ServiceRegister(&consul.AgentServiceRegistration{
+			ID:      serviceprefix + "-" + master.Name,
+			Name:    master.Name,
+			Port:    master.Port,
+			Address: master.Address,
+			Check:   &consul.AgentServiceCheck{},
+		})
+		if master.Leader {
+			// Probably need to massage this a little
+			err = agent.ServiceRegister(&consul.AgentServiceRegistration{
+				ID:      serviceprefix + "-leader-" + master.Name,
+				Name:    "leader" + master.Name,
+				Port:    master.Port,
+				Address: master.Address,
+				Check:   &consul.AgentServiceCheck{},
+			})
+		}
+
+		// Update TTL for record/service
+	}
+
+}
+
 func (c *ConsulBackend) insertFrameworkRecords(rg *records.RecordGenerator) {
 	// Note:
 	// We'll want to look at using the TTL portion of checks
@@ -188,56 +186,5 @@ func (c *ConsulBackend) insertFrameworkRecords(rg *records.RecordGenerator) {
 		// Update TTL for record/service
 	}
 
-}
-*/
-
-/*
-	// I think this might get ugly
-	// // Iterate through all our slave IPs to try to map them up with consul agents
-	for id, addr := range rg.SlaveIPs {
-		for _, agent := range Agents {
-			if Agent.Addr == addr {
-				AgentSlave[agent] = addr
-				SlaveAgent[addr] = agent
-			}
-		}
-	}
-
-	for record, ip := range rg.As {
-		for addr, agent := range SlaveAgent {
-			if ip == addr {
-				/*
-					// insert canonical A records
-					canonical := ctx.taskName + "-" + ctx.taskID + "-" + ctx.slaveID + "." + fname
-					arec := ctx.taskName + "." + fname
-					rg.insertRR(arec+tail, ctx.taskIP, "A")
-					rg.insertRR(canonical+tail, ctx.taskIP, "A")
-					rg.insertRR(arec+".slave"+tail, ctx.slaveIP, "A")
-					rg.insertRR(canonical+".slave"+tail, ctx.slaveIP, "A")
-
-*/
-
-// Need to register with agent
-/*
-	err := agent.ServiceRegister(&consul.AgentServiceRegistration{
-		ID:      service.ID,
-		Name:    service.Name,
-		Port:    service.Port,
-		Address: service.Address,
-		Check: &consulapi.AgentServiceCheck{
-			TTL:      service.Check.TTL,
-			Script:   service.Check.Script,
-			HTTP:     service.Check.HTTP,
-			Interval: service.Check.Interval,
-		},
-	})
-*/
-/*
-				if err != nil {
-					log.Println(err)
-				}
-			}
-		}
-	}
 }
 */
