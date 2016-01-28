@@ -223,9 +223,11 @@ func (f Framework) HostPort() (string, string) {
 
 // Slave holds a slave as defined in the /state.json Mesos HTTP endpoint.
 type Slave struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
-	PID      PID    `json:"pid"`
+	ID       string     `json:"id"`
+	Hostname string     `json:"hostname"`
+	PID      PID        `json:"pid"`
+	Attrs    Attributes `json:"attributes"`
+	Active   bool       `json:"active"`
 }
 
 // PID holds a Mesos PID and implements the json.Unmarshaler interface.
@@ -235,6 +237,12 @@ type PID struct{ *upid.UPID }
 func (p *PID) UnmarshalJSON(data []byte) (err error) {
 	p.UPID, err = upid.Parse(string(bytes.Trim(data, `" `)))
 	return err
+}
+
+type Attributes struct {
+	DC     string `json:"dc"`
+	Master string `json:"master"`
+	Rack   string `json:"rack"`
 }
 
 // State holds the state defined in the /state.json Mesos HTTP endpoint.
