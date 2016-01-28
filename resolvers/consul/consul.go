@@ -122,28 +122,7 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 		if err != nil {
 			log.Println(err)
 		}
-
-		// Need to rethink this
-		// Maybe <hostname>.slave.mesos? idk
-		// but record will be distributed among consul agents
-		// so having local.x is kind of pointless as it'll be
-		// the same as slave.mesos
-		/*
-			// Create a way to lookup the local slave entry
-			// local.slave.mesos.service.consul
-			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      serviceprefix + ":local-" + slave.ID,
-				Name:    "local.slave.mesos",
-				Port:    port,
-				Address: slave.PID.Host,
-			})
-
-			if err != nil {
-				log.Println(err)
-			}
-		*/
 	}
-
 }
 
 func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string) {
@@ -202,29 +181,8 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 			if err != nil {
 				log.Println(err)
 			}
-
-			// Need to rethink this
-			// Maybe <hostname>.slave.mesos? idk
-			// but record will be distributed among consul agents
-			// so having local.x is kind of pointless as it'll be
-			// the same as slave.mesos
-			/*
-				// Create a way to lookup the local slave entry
-				// local.master.mesos.service.consul
-				err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-					ID:      serviceprefix + ":local-" + slave.ID,
-					Name:    "local.master.mesos",
-					Port:    port,
-					Address: slave.PID.Host,
-				})
-
-				if err != nil {
-					log.Println(err)
-				}
-			*/
 		}
 	}
-
 }
 
 func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
@@ -257,53 +215,3 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 		}
 	}
 }
-
-/*
-func (c *ConsulBackend) insertMasterRecords(rg *records.RecordGenerator) {
-	// Note:
-	// We'll want to look at using the TTL portion of checks
-	// to take care of obsoleting old records
-	serviceprefix := "mesosdns"
-	for _, master := range rg.Masters {
-
-		err := agent.ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      serviceprefix + "-" + master.Name,
-			Name:    master.Name,
-			Port:    master.Port,
-			Address: master.Address,
-			Check:   &consul.AgentServiceCheck{},
-		})
-		if master.Leader {
-			// Probably need to massage this a little
-			err = agent.ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      serviceprefix + "-leader-" + master.Name,
-				Name:    "leader" + master.Name,
-				Port:    master.Port,
-				Address: master.Address,
-				Check:   &consul.AgentServiceCheck{},
-			})
-		}
-
-		// Update TTL for record/service
-	}
-
-}
-
-func (c *ConsulBackend) insertFrameworkRecords(rg *records.RecordGenerator) {
-	// Note:
-	// We'll want to look at using the TTL portion of checks
-	// to take care of obsoleting old records
-	serviceprefix := "mesosdns"
-	for _, framework := range rg.Frameworks {
-		err := agent.ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      serviceprefix + "-" + framework.Name,
-			Name:    framework.Name,
-			Port:    framework.Port,
-			Address: framework.Address,
-			Check:   &consul.AgentServiceCheck{},
-		})
-		// Update TTL for record/service
-	}
-
-}
-*/
