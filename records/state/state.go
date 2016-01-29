@@ -133,7 +133,7 @@ func hostIPs(t *Task) []string { return []string{t.SlaveIP} }
 // networkInfoIPs returns IP addresses from a given Task's
 // []Status.ContainerStatus.[]NetworkInfos.[]IPAddresses.IPAddress
 func networkInfoIPs(t *Task) []string {
-	return statusIPs(t.Statuses, func(s *Status) []string {
+	return StatusIPs(t.Statuses, func(s *Status) []string {
 		ips := make([]string, len(s.ContainerStatus.NetworkInfos))
 		for _, netinfo := range s.ContainerStatus.NetworkInfos {
 			if len(netinfo.IPAddresses) > 0 {
@@ -162,18 +162,18 @@ const (
 // dockerIPs returns IP addresses from the values of all
 // Task.[]Status.[]Labels whose keys are equal to "Docker.NetworkSettings.IPAddress".
 func dockerIPs(t *Task) []string {
-	return statusIPs(t.Statuses, labels(DockerIPLabel))
+	return StatusIPs(t.Statuses, Labels(DockerIPLabel))
 }
 
 // mesosIPs returns IP addresses from the values of all
 // Task.[]Status.[]Labels whose keys are equal to
 // "MesosContainerizer.NetworkSettings.IPAddress".
 func mesosIPs(t *Task) []string {
-	return statusIPs(t.Statuses, labels(MesosIPLabel))
+	return StatusIPs(t.Statuses, Labels(MesosIPLabel))
 }
 
 // statusIPs returns the latest running status IPs extracted with the given src
-func statusIPs(st []Status, src func(*Status) []string) []string {
+func StatusIPs(st []Status, src func(*Status) []string) []string {
 	// the state.json we extract from mesos makes no guarantees re: the order
 	// of the task statuses so we should check the timestamps to avoid problems
 	// down the line. we can't rely on seeing the same sequence. (@joris)
@@ -190,9 +190,9 @@ func statusIPs(st []Status, src func(*Status) []string) []string {
 	return nil
 }
 
-// labels returns all given Status.[]Labels' values whose keys are equal
+// Labels returns all given Status.[]Labels' values whose keys are equal
 // to the given key
-func labels(key string) func(*Status) []string {
+func Labels(key string) func(*Status) []string {
 	return func(s *Status) []string {
 		vs := make([]string, 0, len(s.Labels))
 		for _, l := range s.Labels {
