@@ -13,11 +13,12 @@ import (
 )
 
 type ConsulBackend struct {
-	Agents    map[string]*consul.Agent
-	AgentPort string
-	Client    *consul.Client
-	Config    *consul.Config
-	SlaveIDIP map[string]string
+	Agents        map[string]*consul.Agent
+	AgentPort     string
+	Client        *consul.Client
+	Config        *consul.Config
+	ServicePrefix string
+	SlaveIDIP     map[string]string
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
@@ -34,11 +35,12 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 	port := strings.Split(cfg.Address, ":")[1]
 
 	return &ConsulBackend{
-		Agents:    make(map[string]*consul.Agent),
-		AgentPort: port,
-		Client:    client,
-		Config:    cfg,
-		SlaveIDIP: make(map[string]string),
+		Agents:        make(map[string]*consul.Agent),
+		AgentPort:     port,
+		Client:        client,
+		Config:        cfg,
+		ServicePrefix: "mesos-dns",
+		SlaveIDIP:     make(map[string]string),
 	}
 
 }
@@ -95,7 +97,6 @@ func (c *ConsulBackend) connectAgents() error {
 }
 
 func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
-	serviceprefix := "mesos-dns"
 	for _, slave := range slaves {
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
@@ -115,7 +116,7 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
 		err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      serviceprefix + ":" + slave.ID,
+			ID:      c.ServicePrefix + ":" + slave.ID,
 			Name:    "slave.mesos",
 			Port:    port,
 			Address: slave.PID.Host,
@@ -145,7 +146,6 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 		Active: true,
 	}
 	slaves = append(slaves, lead)
-	serviceprefix := "mesos-dns"
 	for _, slave := range slaves {
 		if slave.Attrs.Master == "false" {
 			// Slave node
@@ -164,7 +164,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 
 		if slave.ID == leader {
 			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      serviceprefix + ":" + slave.ID,
+				ID:      c.ServicePrefix + ":" + slave.ID,
 				Name:    "leader.mesos",
 				Port:    port,
 				Address: slave.PID.Host,
@@ -174,7 +174,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 			// Add slave to the pool of masters
 			// master.mesos.service.consul
 			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      serviceprefix + ":" + slave.ID,
+				ID:      c.ServicePrefix + ":" + slave.ID,
 				Name:    "master.mesos",
 				Port:    port,
 				Address: slave.PID.Host,
@@ -188,7 +188,6 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 }
 
 func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
-	serviceprefix := "mesos-dns"
 	for _, framework := range frameworks {
 
 		// task, pid, name, hostname
@@ -206,7 +205,7 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
 		err = c.Agents[framework.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      serviceprefix + ":" + framework.Name,
+			ID:      c.ServicePrefix + ":" + framework.Name,
 			Name:    framework.Name,
 			Port:    port,
 			Address: framework.PID.Host,
@@ -214,6 +213,63 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 
 		if err != nil {
 			log.Println(err)
+		}
+	}
+}
+
+func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) {
+	for _, task := range tasks {
+		if task.State != "TASK_RUNNING" {
+			continue
+		}
+		// Might be able to use task.SlaveIP, but in testing this reutrns ""
+
+		// Get the right consul agent to register the service with
+		if _, ok := c.Agents[c.SlaveIDIP[task.SlaveID]]; !ok {
+			log.Println("Unknown consul agent", task.SlaveID, "for task", task.ID)
+			continue
+		}
+
+		// Tasks can potentially have multiple IPs I guess
+		//addresses := task.IPs("mesos", "docker", "netinfo")
+		//if len(addresses) == 0 {
+		// Try to look up calico label
+		var address string
+		for _, status := range task.Statuses {
+			if status.State != "TASK_RUNNING" {
+				continue
+			}
+			for _, label := range status.Labels {
+				if label.Key == "CalicoDocker.NetworkSettings.IPAddress" {
+					address = label.Value
+				}
+			}
+		}
+
+		// If still empty, set to host IP
+		if address == "" {
+			address = c.SlaveIDIP[task.SlaveID]
+		}
+
+		//}
+
+		// Create a service registration for every port
+		for _, port := range task.Ports() {
+			//log.Println("Registering task:", task.ID, address, port)
+			p, err := strconv.Atoi(port)
+			if err != nil {
+				log.Println("Something stupid happenend and we cant convert", port, "to int")
+				continue
+			}
+			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&consul.AgentServiceRegistration{
+				ID:      strings.Join([]string{c.ServicePrefix, task.ID, port}, ":"),
+				Name:    strings.Join([]string{task.Name, framework}, "."),
+				Port:    p,
+				Address: address,
+			})
+			if err != nil {
+				log.Println(err)
+			}
 		}
 	}
 }

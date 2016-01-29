@@ -41,9 +41,9 @@ func TestSlaveRecords(t *testing.T) {
 
 	backend.insertSlaveRecords(sj.Slaves)
 
-	// 2x Slaves
+	// 5x Slaves ( 3x master+slave 3x slave )
 	// 1x Consul
-	validateRecords(t, backend, 3)
+	validateRecords(t, backend, 6)
 }
 
 func TestMasterRecords(t *testing.T) {
@@ -67,6 +67,29 @@ func TestFrameworkRecords(t *testing.T) {
 	// 1x Marathon
 	// 1x Consul
 	validateRecords(t, backend, 2)
+}
+
+func TestTaskRecords(t *testing.T) {
+	server, backend, sj := recordSetup(t)
+	defer server.Stop()
+
+	// Need to do this to populate backend.SlaveIDIP
+	// so we can pull appropriate slave ip mapping
+	// by slave.ID
+	backend.insertSlaveRecords(sj.Slaves)
+
+	for _, framework := range sj.Frameworks {
+		backend.insertTaskRecords(framework.Name, framework.Tasks)
+	}
+
+	// 1x Consul
+	// 5x slave
+	// 1x nginx-host
+	// 1x nginx-none
+	// 1x nginx-bridge
+	// 2x4 fluentd
+	validateRecords(t, backend, 17)
+	//validateRecords(t, backend, 12)
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
@@ -154,6 +177,11 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 
 		if len(services) != expected {
 			t.Error("Did not get back", expected, "services. Got back", len(services))
+			t.Error("Services:")
+			for k := range services {
+				t.Error(" -", k)
+			}
+
 		}
 	}
 
