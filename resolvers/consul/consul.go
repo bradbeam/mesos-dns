@@ -17,6 +17,7 @@ type ConsulBackend struct {
 	AgentPort     string
 	Client        *consul.Client
 	Config        *consul.Config
+	LookupOrder   []string
 	ServicePrefix string
 	SlaveIDIP     map[string]string
 }
@@ -39,6 +40,7 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 		AgentPort:     port,
 		Client:        client,
 		Config:        cfg,
+		LookupOrder:   []string{"docker", "netinfo", "host"},
 		ServicePrefix: "mesos-dns",
 		SlaveIDIP:     make(map[string]string),
 	}
@@ -230,19 +232,31 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 			continue
 		}
 
-		// Tasks can potentially have multiple IPs I guess
-		//addresses := task.IPs("mesos", "docker", "netinfo")
-		//if len(addresses) == 0 {
-		// Try to look up calico label
 		var address string
-		for _, status := range task.Statuses {
-			if status.State != "TASK_RUNNING" {
-				continue
-			}
-			for _, label := range status.Labels {
-				if label.Key == "CalicoDocker.NetworkSettings.IPAddress" {
-					address = label.Value
+		for _, lookup := range c.LookupOrder {
+			lookupkey := strings.Split(lookup, ":")
+			switch lookupkey[0] {
+			case "mesos":
+				address = task.IP("mesos")
+			case "docker":
+				address = task.IP("docker")
+			case "netinfo":
+				address = task.IP("netinfo")
+			case "host":
+				address = task.IP("host")
+			case "label":
+				if len(lookupkey) != 2 {
+					log.Println("Lookup order label is not in proper format `label:labelname`")
+					continue
 				}
+				addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
+				if len(addresses) > 0 {
+					address = addresses[0]
+				}
+			}
+
+			if address != "" {
+				break
 			}
 		}
 
@@ -250,8 +264,6 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 		if address == "" {
 			address = c.SlaveIDIP[task.SlaveID]
 		}
-
-		//}
 
 		// Create a service registration for every port
 		for _, port := range task.Ports() {

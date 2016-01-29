@@ -178,8 +178,8 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 		if len(services) != expected {
 			t.Error("Did not get back", expected, "services. Got back", len(services))
 			t.Error("Services:")
-			for k := range services {
-				t.Error(" -", k)
+			for k, info := range services {
+				t.Error(" -", k, "=>", info.Address)
 			}
 
 		}
