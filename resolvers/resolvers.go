@@ -10,21 +10,25 @@ import (
 )
 
 type Resolver interface {
-	Reload(rg *records.RecordGenerator, err error)
-	// Probably want to add a config tostring
+	Reload(rg *records.RecordGenerator)
 }
 
 func New(config records.Config, errch chan error, version string) []Resolver {
-	var resolvers []Resolver
+    var conf interface{}
+    var resolvers []Resolver
 
 	for _, rType := range config.Resolvers {
-		switch strings.ToLower(rType) {
+        // Each backend receives their config as type interface{} or nil.
+        switch strings.ToLower(rType) {
 		case "consul":
-			resolvers = append(resolvers, consul.New(config, errch, version))
+            conf = config.ResolversConf["consul"]
+		    resolvers = append(resolvers, consul.New(conf, errch, version))
 		case "builtin":
-			resolvers = append(resolvers, builtin.New(config, errch, version))
+            conf = config.ResolversConf["builtin"]
+		    resolvers = append(resolvers, builtin.New(conf, errch, version))
 		case "bind":
-			resolvers = append(resolvers, bind.New(config, errch, version))
+            conf = config.ResolversConf["bind"]
+			resolvers = append(resolvers, bind.New(conf, errch, version))
 		}
 	}
 

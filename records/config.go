@@ -8,12 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
+    "time"
 
 	"github.com/mesosphere/mesos-dns/logging"
-	bind "github.com/mesosphere/mesos-dns/resolvers/bind/config"
-	builtin "github.com/mesosphere/mesos-dns/resolvers/builtin/config"
-	consul "github.com/mesosphere/mesos-dns/resolvers/consul/config"
 	"github.com/miekg/dns"
 )
 
@@ -25,11 +22,6 @@ type Config struct {
 	EnforceRFC952 bool
 	// File is the location of the config.json file
 	File string
-	// Enable serving HTTP requests
-	HTTPOn bool `json:"HttpOn"`
-	// NOTE(tsenart): HTTPPort, DNSOn and HTTPOn have defined JSON keys for
-	// backwards compatibility with external API clients.
-	HTTPPort int `json:"HttpPort"`
 	// IPSources is the prioritized list of task IP sources
 	IPSources []string // e.g. ["host", "docker", "mesos", "rkt"]
 	// ListenAddr is the server listener address
@@ -38,10 +30,22 @@ type Config struct {
 	Masters []string
 	// Refresh frequency: the frequency in seconds of regenerating records (default 60)
 	RefreshSeconds int
-	// Which backends to load (builtin by default)
+	// Which backend resolvers to load (builtin by default)
 	Resolvers []string
+	// A map of the configurations for the Resolvers
+	ResolversConf map[string]interface{}
 	// Timeout in seconds waiting for the master to return data from StateJson
 	StateTimeoutSeconds int
+	// SOA record fields (see http://tools.ietf.org/html/rfc1035#page-18)
+	SOAExpire  uint32 // expiration time
+	SOAMinttl  uint32 // minimum TTL
+	SOAMname   string // primary name server
+	SOARefresh uint32 // refresh interval
+	SOARetry   uint32 // retry interval
+	SOARname   string // email of admin esponsible
+	SOASerial  uint32 // initial version number (incremented on refresh)
+	// TTL: the TTL value used for SRV and A records (default 60)
+	TTL int32
 	// Timeout is the default connect/read/write timeout for outbound
 	// queries
 	Timeout int
@@ -50,25 +54,24 @@ type Config struct {
 	// Zookeeper Detection Timeout: how long in seconds to wait for Zookeeper to
 	// be initially responsive. Default is 30 and 0 means no timeout.
 	ZkDetectionTimeout int
-	// Configuration specific to the builtin resolver
-	Builtin *builtin.Config
-	// Configuration specific to the consul resolver
-	Consul *consul.Config
-	// Configuration specific to the file resolver
-	Bind *bind.Config
 }
 
 // NewConfig return the default config of the resolver
 func NewConfig() Config {
 	return Config{
 		Domain:              "mesos",
-		HTTPOn:              true,
-		HTTPPort:            8123,
 		IPSources:           []string{"netinfo", "mesos", "host"},
 		Listener:            "0.0.0.0",
 		RefreshSeconds:      60,
 		Resolvers:           []string{"builtin"},
 		StateTimeoutSeconds: 300,
+		SOAExpire:           86400,
+		SOAMinttl:           60,
+		SOAMname:            "ns1.mesos",
+		SOARefresh:          60,
+		SOARetry:            600,
+		SOARname:            "root.ns1.mesos",
+		TTL:                 60,
 		Timeout:             5,
 		ZkDetectionTimeout:  30,
 	}
@@ -81,6 +84,7 @@ func SetConfig(cjson string) Config {
 		logging.Error.Fatal(err)
 	}
 	logging.Verbose.Printf("config loaded from %q", c.File)
+
 	// validate and complete configuration file
 	err = validateEnabledServices(c)
 	if err != nil {
@@ -96,47 +100,47 @@ func SetConfig(cjson string) Config {
 
 	c.Domain = strings.ToLower(c.Domain)
 
-	// Builtin resolver validation
-	if c.Builtin.ExternalOn {
-		if len(c.Builtin.RemoteServers) == 0 {
-			c.Builtin.RemoteServers = GetLocalDNS()
-		}
-		if err = validateRemoteServers(c.Builtin.RemoteServers); err != nil {
-			logging.Error.Fatalf("Remote servers validation failed: %v", err)
-		}
-	}
-
 	// SOA record fields
-	c.Builtin.SOARname = strings.TrimRight(strings.Replace(c.Builtin.SOARname, "@", ".", -1), ".") + "."
-	c.Builtin.SOAMname = strings.TrimRight(c.Builtin.SOAMname, ".") + "."
-	c.Builtin.SOASerial = uint32(time.Now().Unix())
+	c.SOARname = strings.TrimRight(strings.Replace(c.SOARname, "@", ".", -1), ".") + "."
+	c.SOAMname = strings.TrimRight(c.SOAMname, ".") + "."
+	c.SOASerial = uint32(time.Now().Unix())
 
 	// print configuration file
 	logging.Verbose.Println("Mesos-DNS configuration:")
 	logging.Verbose.Println("   - ConfigFile: ", c.File)
 	logging.Verbose.Println("   - Domain: " + c.Domain)
 	logging.Verbose.Println("   - EnforceRFC952: ", c.EnforceRFC952)
-	logging.Verbose.Println("   - HttpPort: ", c.HTTPPort)
-	logging.Verbose.Println("   - HttpOn: ", c.HTTPOn)
 	logging.Verbose.Println("   - IPSources: ", c.IPSources)
 	logging.Verbose.Println("   - Listener: " + c.Listener)
 	logging.Verbose.Println("   - Masters: " + strings.Join(c.Masters, ", "))
 	logging.Verbose.Println("   - RefreshSeconds: ", c.RefreshSeconds)
 	logging.Verbose.Println("   - Resolvers: " + strings.Join(c.Resolvers, ", "))
+	logging.Verbose.Println("   - SOAMname: " + c.SOAMname)
+	logging.Verbose.Println("   - SOARname: " + c.SOARname)
+	logging.Verbose.Println("   - SOASerial: ", c.SOASerial)
+	logging.Verbose.Println("   - SOARefresh: ", c.SOARefresh)
+	logging.Verbose.Println("   - SOARetry: ", c.SOARetry)
+	logging.Verbose.Println("   - SOAExpire: ", c.SOAExpire)
 	logging.Verbose.Println("   - StateTimeoutSeconds: ", c.StateTimeoutSeconds)
 	logging.Verbose.Println("   - Timeout: ", c.Timeout)
 	logging.Verbose.Println("   - Zookeeper: ", c.Zk)
 	logging.Verbose.Println("   - ZookeeperDetectionTimeout: ", c.ZkDetectionTimeout)
-	// print out specific backend configurations
-	for _, backend := range c.Resolvers {
-		logging.Verbose.Println("  ", backend, "Configuration:")
+
+	// print individual configurations for resolvers
+	logging.Verbose.Println("   - ResolversConf:")
+	for k, v := range c.ResolversConf {
+		logging.Verbose.Printf("     - %s:\n", k)
+		for key, val := range v.(map[string]interface{}) {
+			logging.Verbose.Printf("       - %s:\n%+v\n", k, v)
+		}
 	}
 
 	return *c
 }
 
 func readConfig(file string) (*Config, error) {
-	c := NewConfig()
+	var err error
+	var j interface{}
 
 	workingDir := "."
 	for _, name := range []string{"HOME", "USERPROFILE"} { // *nix, windows
@@ -145,14 +149,15 @@ func readConfig(file string) (*Config, error) {
 		}
 	}
 
-	var err error
-	c.File, err = filepath.Abs(strings.Replace(file, "~/", workingDir+"/", 1))
+	c := NewConfig()
+	// Check file path, read file, Unmarshal JSON
+	file, err = filepath.Abs(strings.Replace(file, "~/", workingDir+"/", 1))
 	if err != nil {
 		return nil, fmt.Errorf("cannot find configuration file")
-	} else if bs, err := ioutil.ReadFile(c.File); err != nil {
-		return nil, fmt.Errorf("missing configuration file: %q", c.File)
+	} else if bs, err := ioutil.ReadFile(file); err != nil {
+		return nil, fmt.Errorf("missing configuration file: %q", file)
 	} else if err = json.Unmarshal(bs, &c); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config file %q: %v", c.File, err)
+		return nil, fmt.Errorf("failed to unmarshal config file %q: %v", file, err)
 	}
 
 	return &c, nil

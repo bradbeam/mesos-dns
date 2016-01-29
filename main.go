@@ -58,12 +58,18 @@ func main() {
 	for {
 		select {
 		case <-reload.C:
-			rg := records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
+            var rg *records.RecordGenerator
+
+			rg = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
 			err := rg.ParseState(config, masters...)
 
+            if err != nil {
+                logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)
+                rg = nil
+            }
+
 			for _, resolver := range resolvers {
-				// TODO: Passing an error is probably not the best way to do this
-				resolver.Reload(rg, err)
+				resolver.Reload(rg)
 			}
 		case masters = <-changed:
 			if len(masters) == 0 || masters[0] == "" { // no leader

@@ -6,7 +6,7 @@ import (
 )
 
 func validateEnabledServices(c *Config) error {
-	if !c.Builtin.DNSOn && !c.HTTPOn {
+	if !c.Builtin.DNSOn && !c.Builtin.HTTPOn {
 		return fmt.Errorf("Either DNS or HTTP server should be on")
 	}
 	if len(c.Masters) == 0 && c.Zk == "" {
@@ -42,10 +42,10 @@ func validateMasters(ms []string) error {
 	return nil
 }
 
-// validateRemoteServers checks that each remote server's IP in the list is a properly
+// validateRemoteDNS checks that each remote server's IP in the list is a properly
 // formatted IP address. Duplicate IPs in the list are not allowed.
 // returns nil if the remote server list is empty, or else all IPs in the list are valid.
-func validateRemoteServers(rs []string) error {
+func validateRemoteDNS(rs []string) error {
 	if len(rs) == 0 {
 		return nil
 	}

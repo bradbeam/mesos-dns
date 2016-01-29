@@ -24,9 +24,8 @@ import (
 
 // Resolver holds configuration state and the resource records
 type Resolver struct {
-	masters []string
 	version string
-	config  records.Config
+	config  Config
 	rs      *records.RecordGenerator
 	rsLock  sync.RWMutex
 	rng     *rand.Rand
@@ -34,18 +33,20 @@ type Resolver struct {
 }
 
 // New returns a Resolver with the given version and configuration.
-func New(config records.Config, errch chan error, version string) *Resolver {
+func New(rc records.Config, errch chan error, version string) *Resolver {
 	var recordGenerator *records.RecordGenerator
+
+    Config := rc.config{
+    }
 
 	recordGenerator = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
 	r := &Resolver{
 		version: version,
-		config:  config.Builtin,
+		config:  Config,
 		rs:      recordGenerator,
 		// rand.Sources aren't safe for concurrent use, except the global one.
 		// See: https://github.com/golang/go/issues/3611
-		rng:     rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
-		masters: append([]string{""}, config.Masters...),
+		rng:     rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())})
 	}
 
 	timeout := 5 * time.Second
@@ -53,7 +54,7 @@ func New(config records.Config, errch chan error, version string) *Resolver {
 		timeout = time.Duration(config.Timeout) * time.Second
 	}
 
-	rs := config.RemoteServers
+	rs := config.RemoteDNS
 	if !config.ExternalOn {
 		rs = rs[:0]
 	}
@@ -145,16 +146,10 @@ func (res *Resolver) Serve(proto string) (<-chan struct{}, <-chan error) {
 	return ch, errCh
 }
 
-// SetMasters sets the given masters.
-// This method is not goroutine-safe.
-func (res *Resolver) SetMasters(masters []string) {
-	res.masters = masters
-}
-
 // Reload triggers a new state load from the configured mesos masters.
 // This method is not goroutine-safe.
 func (res *Resolver) Reload(rg *records.RecordGenerator, err error) {
-	if err == nil {
+	if rg != nil {
 		timestamp := uint32(time.Now().Unix())
 		// may need to refactor for fairness
 		res.rsLock.Lock()
@@ -162,8 +157,8 @@ func (res *Resolver) Reload(rg *records.RecordGenerator, err error) {
 		atomic.StoreUint32(&res.config.SOASerial, timestamp)
 		res.rs = rg
 	} else {
-		logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)
-	}
+        logging.Info("Nil RecordGenerator received by main loop. Retaining old state.")
+    }
 
 	logging.PrintCurLog()
 }

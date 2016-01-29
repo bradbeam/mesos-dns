@@ -1,3 +1,3 @@
-package config
+package consul
 
 type Config struct{}
