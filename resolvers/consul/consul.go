@@ -15,14 +15,15 @@ import (
 )
 
 type ConsulBackend struct {
-	Agents        map[string]*consul.Agent
-	AgentPort     string
-	Client        *consul.Client
-	Config        *consul.Config
-	LookupOrder   []string
-	Refresh       int
-	ServicePrefix string
-	SlaveIDIP     map[string]string
+	Agents          map[string]*consul.Agent
+	AgentPort       string
+	Client          *consul.Client
+	Config          *consul.Config
+	LookupOrder     []string
+	Refresh         int
+	ServicePrefix   string
+	SlaveIDIP       map[string]string
+	SlaveIDHostname map[string]string
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
@@ -39,14 +40,15 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 	port := strings.Split(cfg.Address, ":")[1]
 
 	return &ConsulBackend{
-		Agents:        make(map[string]*consul.Agent),
-		AgentPort:     port,
-		Client:        client,
-		Config:        cfg,
-		LookupOrder:   []string{"docker", "netinfo", "host"},
-		Refresh:       5,
-		ServicePrefix: "mesos-dns",
-		SlaveIDIP:     make(map[string]string),
+		Agents:          make(map[string]*consul.Agent),
+		AgentPort:       port,
+		Client:          client,
+		Config:          cfg,
+		LookupOrder:     []string{"docker", "netinfo", "host"},
+		Refresh:         5,
+		ServicePrefix:   "mesos-dns",
+		SlaveIDIP:       make(map[string]string),
+		SlaveIDHostname: make(map[string]string),
 	}
 
 }
@@ -124,6 +126,7 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 		// We'll need this for service registration to the appropriate
 		// slaves
 		c.SlaveIDIP[slave.ID] = slave.PID.Host
+		c.SlaveIDHostname[slave.ID] = slave.Hostname
 
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
@@ -291,9 +294,23 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 				log.Println("Something stupid happenend and we cant convert", port, "to int")
 				continue
 			}
+
+			// Register task.framework
 			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&consul.AgentServiceRegistration{
 				ID:      strings.Join([]string{c.ServicePrefix, task.ID, port}, ":"),
 				Name:    strings.Join([]string{task.Name, framework}, "."),
+				Port:    p,
+				Address: address,
+				Tags:    []string{"timestamp%" + timestamp},
+			})
+			if err != nil {
+				log.Println(err)
+			}
+
+			// Register slave.task.framework
+			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&consul.AgentServiceRegistration{
+				ID:      strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":"),
+				Name:    strings.Join([]string{c.SlaveIDHostname[task.SlaveID], task.Name, framework}, "."),
 				Port:    p,
 				Address: address,
 				Tags:    []string{"timestamp%" + timestamp},

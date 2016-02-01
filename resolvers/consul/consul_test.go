@@ -89,7 +89,7 @@ func TestTaskRecords(t *testing.T) {
 	// 1x nginx-none
 	// 1x nginx-bridge
 	// 2x4 fluentd
-	validateRecords(t, backend, 17)
+	validateRecords(t, backend, 28)
 	//validateRecords(t, backend, 12)
 }
 
@@ -107,7 +107,7 @@ func TestCleanupRecords(t *testing.T) {
 	}
 
 	// We'll go ahead and have all the
-	validateRecords(t, backend, 17)
+	validateRecords(t, backend, 28)
 
 	time.Sleep(time.Duration(2*backend.Refresh)*time.Second + 1)
 	backend.Cleanup()
