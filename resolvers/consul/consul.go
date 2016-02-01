@@ -4,6 +4,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	consul "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
@@ -18,6 +20,7 @@ type ConsulBackend struct {
 	Client        *consul.Client
 	Config        *consul.Config
 	LookupOrder   []string
+	Refresh       int
 	ServicePrefix string
 	SlaveIDIP     map[string]string
 }
@@ -41,6 +44,7 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 		Client:        client,
 		Config:        cfg,
 		LookupOrder:   []string{"docker", "netinfo", "host"},
+		Refresh:       5,
 		ServicePrefix: "mesos-dns",
 		SlaveIDIP:     make(map[string]string),
 	}
@@ -56,6 +60,11 @@ func (c *ConsulBackend) Reload(rg *records.RecordGenerator, err error) {
 	c.insertMasterRecords(rg.State.Slaves, rg.State.Leader)
 	c.insertSlaveRecords(rg.State.Slaves)
 	c.insertFrameworkRecords(rg.State.Frameworks)
+	for _, framework := range rg.State.Frameworks {
+		c.insertTaskRecords(framework.Name, framework.Tasks)
+	}
+
+	c.Cleanup()
 }
 
 func (c *ConsulBackend) connectAgents() error {
@@ -99,6 +108,7 @@ func (c *ConsulBackend) connectAgents() error {
 }
 
 func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
+	timestamp := time.Now().String()
 	for _, slave := range slaves {
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
@@ -122,6 +132,7 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 			Name:    "slave.mesos",
 			Port:    port,
 			Address: slave.PID.Host,
+			Tags:    []string{"timestamp%" + timestamp},
 		})
 
 		if err != nil {
@@ -131,6 +142,8 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 }
 
 func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string) {
+	timestamp := time.Now().String()
+
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
@@ -170,6 +183,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 				Name:    "leader.mesos",
 				Port:    port,
 				Address: slave.PID.Host,
+				Tags:    []string{"timestamp%" + timestamp},
 			})
 
 		} else {
@@ -180,6 +194,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 				Name:    "master.mesos",
 				Port:    port,
 				Address: slave.PID.Host,
+				Tags:    []string{"timestamp%" + timestamp},
 			})
 
 			if err != nil {
@@ -190,6 +205,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 }
 
 func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
+	timestamp := time.Now().String()
 	for _, framework := range frameworks {
 
 		// task, pid, name, hostname
@@ -211,6 +227,7 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 			Name:    framework.Name,
 			Port:    port,
 			Address: framework.PID.Host,
+			Tags:    []string{"timestamp%" + timestamp},
 		})
 
 		if err != nil {
@@ -220,6 +237,7 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 }
 
 func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) {
+	timestamp := time.Now().String()
 	for _, task := range tasks {
 		if task.State != "TASK_RUNNING" {
 			continue
@@ -278,10 +296,55 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 				Name:    strings.Join([]string{task.Name, framework}, "."),
 				Port:    p,
 				Address: address,
+				Tags:    []string{"timestamp%" + timestamp},
 			})
 			if err != nil {
 				log.Println(err)
 			}
 		}
+	}
+}
+
+func (c *ConsulBackend) Cleanup() {
+	var wg sync.WaitGroup
+	for _, agent := range c.Agents {
+		// Set up a goroutune to handle each agent
+		wg.Add(1)
+		go func() {
+			services, err := agent.Services()
+			if err != nil {
+				log.Println(err)
+				wg.Done()
+				return
+			}
+
+			for service, serviceinfo := range services {
+				// All services registered by mesos-dns will have the
+				// service prefix be c.ServicePrefix
+				if c.ServicePrefix != strings.Split(service, ":")[0] {
+					continue
+				}
+				for _, tag := range serviceinfo.Tags {
+					timestamp := strings.Split(tag, "%")
+					if "timestamp" != timestamp[0] {
+						continue
+					}
+					servicets, err := time.Parse("2006-01-02 15:04:05.000000000 -0700 MST", timestamp[1])
+					if err != nil {
+						log.Println(err)
+						continue
+					}
+					// Allow record to be 2x time.refresh before purging it
+					if time.Now().After(servicets.Add(time.Duration(c.Refresh*2) * time.Second)) {
+						err := agent.ServiceDeregister(service)
+						if err != nil {
+							log.Println(err)
+						}
+					}
+				}
+			}
+			wg.Done()
+		}()
+		wg.Wait()
 	}
 }

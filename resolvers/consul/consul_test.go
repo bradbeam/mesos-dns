@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/testutil"
@@ -90,6 +91,29 @@ func TestTaskRecords(t *testing.T) {
 	// 2x4 fluentd
 	validateRecords(t, backend, 17)
 	//validateRecords(t, backend, 12)
+}
+
+func TestCleanupRecords(t *testing.T) {
+	server, backend, sj := recordSetup(t)
+	defer server.Stop()
+
+	// Need to do this to populate backend.SlaveIDIP
+	// so we can pull appropriate slave ip mapping
+	// by slave.ID
+	backend.insertSlaveRecords(sj.Slaves)
+
+	for _, framework := range sj.Frameworks {
+		backend.insertTaskRecords(framework.Name, framework.Tasks)
+	}
+
+	// We'll go ahead and have all the
+	validateRecords(t, backend, 17)
+
+	time.Sleep(time.Duration(2*backend.Refresh)*time.Second + 1)
+	backend.Cleanup()
+	// All but the consul record should be removed
+	validateRecords(t, backend, 1)
+
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
