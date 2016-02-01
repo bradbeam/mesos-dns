@@ -14,7 +14,7 @@ type FileResolver struct {
 	File *os.File
 }
 
-func New(config records.Config, errch chan<- error, version string) *FileResolver {
+func New(config Config, errch chan<- error, version string) *FileResolver {
 	// Assume our config has all the necessary stuff in it
 	f, err := ioutil.TempFile("./", "mesos-dns")
 
@@ -28,7 +28,7 @@ func New(config records.Config, errch chan<- error, version string) *FileResolve
 
 }
 
-func (f *FileResolver) Reload(rg *records.RecordGenerator, err error) {
+func (f *FileResolver) Reload(rg *records.RecordGenerator) {
 	w := bufio.NewWriter(f.File)
 	for record, ip := range rg.As {
 		for _, addr := range ip {

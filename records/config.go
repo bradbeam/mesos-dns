@@ -4,14 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
-    "time"
+	"time"
 
 	"github.com/mesosphere/mesos-dns/logging"
-	"github.com/miekg/dns"
 )
 
 // Config holds mesos dns configuration
@@ -24,8 +22,6 @@ type Config struct {
 	File string
 	// IPSources is the prioritized list of task IP sources
 	IPSources []string // e.g. ["host", "docker", "mesos", "rkt"]
-	// ListenAddr is the server listener address
-	Listener string
 	// Mesos master(s): a list of IP:port pairs for one or more Mesos masters
 	Masters []string
 	// Refresh frequency: the frequency in seconds of regenerating records (default 60)
@@ -44,11 +40,6 @@ type Config struct {
 	SOARetry   uint32 // retry interval
 	SOARname   string // email of admin esponsible
 	SOASerial  uint32 // initial version number (incremented on refresh)
-	// TTL: the TTL value used for SRV and A records (default 60)
-	TTL int32
-	// Timeout is the default connect/read/write timeout for outbound
-	// queries
-	Timeout int
 	// Zookeeper: a single Zk url
 	Zk string
 	// Zookeeper Detection Timeout: how long in seconds to wait for Zookeeper to
@@ -61,7 +52,6 @@ func NewConfig() Config {
 	return Config{
 		Domain:              "mesos",
 		IPSources:           []string{"netinfo", "mesos", "host"},
-		Listener:            "0.0.0.0",
 		RefreshSeconds:      60,
 		Resolvers:           []string{"builtin"},
 		StateTimeoutSeconds: 300,
@@ -71,8 +61,6 @@ func NewConfig() Config {
 		SOARefresh:          60,
 		SOARetry:            600,
 		SOARname:            "root.ns1.mesos",
-		TTL:                 60,
-		Timeout:             5,
 		ZkDetectionTimeout:  30,
 	}
 }
@@ -86,10 +74,6 @@ func SetConfig(cjson string) Config {
 	logging.Verbose.Printf("config loaded from %q", c.File)
 
 	// validate and complete configuration file
-	err = validateEnabledServices(c)
-	if err != nil {
-		logging.Error.Fatalf("service validation failed: %v", err)
-	}
 	if err = validateMasters(c.Masters); err != nil {
 		logging.Error.Fatalf("Masters validation failed: %v", err)
 	}
@@ -111,7 +95,6 @@ func SetConfig(cjson string) Config {
 	logging.Verbose.Println("   - Domain: " + c.Domain)
 	logging.Verbose.Println("   - EnforceRFC952: ", c.EnforceRFC952)
 	logging.Verbose.Println("   - IPSources: ", c.IPSources)
-	logging.Verbose.Println("   - Listener: " + c.Listener)
 	logging.Verbose.Println("   - Masters: " + strings.Join(c.Masters, ", "))
 	logging.Verbose.Println("   - RefreshSeconds: ", c.RefreshSeconds)
 	logging.Verbose.Println("   - Resolvers: " + strings.Join(c.Resolvers, ", "))
@@ -122,7 +105,6 @@ func SetConfig(cjson string) Config {
 	logging.Verbose.Println("   - SOARetry: ", c.SOARetry)
 	logging.Verbose.Println("   - SOAExpire: ", c.SOAExpire)
 	logging.Verbose.Println("   - StateTimeoutSeconds: ", c.StateTimeoutSeconds)
-	logging.Verbose.Println("   - Timeout: ", c.Timeout)
 	logging.Verbose.Println("   - Zookeeper: ", c.Zk)
 	logging.Verbose.Println("   - ZookeeperDetectionTimeout: ", c.ZkDetectionTimeout)
 
@@ -131,7 +113,7 @@ func SetConfig(cjson string) Config {
 	for k, v := range c.ResolversConf {
 		logging.Verbose.Printf("     - %s:\n", k)
 		for key, val := range v.(map[string]interface{}) {
-			logging.Verbose.Printf("       - %s:\n%+v\n", k, v)
+			logging.Verbose.Printf("       - %s:\n%+v\n", key, val)
 		}
 	}
 
@@ -140,7 +122,6 @@ func SetConfig(cjson string) Config {
 
 func readConfig(file string) (*Config, error) {
 	var err error
-	var j interface{}
 
 	workingDir := "."
 	for _, name := range []string{"HOME", "USERPROFILE"} { // *nix, windows
@@ -173,60 +154,4 @@ func unique(ss []string) []string {
 		}
 	}
 	return out
-}
-
-// GetLocalDNS returns the first nameserver in /etc/resolv.conf
-// Used for non-Mesos queries.
-func GetLocalDNS() []string {
-	conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
-	if err != nil {
-		logging.Error.Fatalf("%v", err)
-	}
-
-	return nonLocalAddies(conf.Servers)
-}
-
-// Returns non-local nameserver entries
-func nonLocalAddies(cservers []string) []string {
-	bad := localAddies()
-
-	good := []string{}
-
-	for i := 0; i < len(cservers); i++ {
-		local := false
-		for x := 0; x < len(bad); x++ {
-			if cservers[i] == bad[x] {
-				local = true
-			}
-		}
-
-		if !local {
-			good = append(good, cservers[i])
-		}
-	}
-
-	return good
-}
-
-// Returns an array of local ipv4 addresses
-func localAddies() []string {
-	addies, err := net.InterfaceAddrs()
-	if err != nil {
-		logging.Error.Println(err)
-	}
-
-	bad := []string{}
-
-	for i := 0; i < len(addies); i++ {
-		ip, _, err := net.ParseCIDR(addies[i].String())
-		if err != nil {
-			logging.Error.Println(err)
-		}
-		t4 := ip.To4()
-		if t4 != nil {
-			bad = append(bad, t4.String())
-		}
-	}
-
-	return bad
 }

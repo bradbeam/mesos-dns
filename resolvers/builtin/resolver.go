@@ -26,27 +26,20 @@ import (
 type Resolver struct {
 	version string
 	config  Config
-	rs      *records.RecordGenerator
+	rg      *records.RecordGenerator
 	rsLock  sync.RWMutex
 	rng     *rand.Rand
 	fwd     exchanger.Forwarder
 }
 
 // New returns a Resolver with the given version and configuration.
-func New(rc records.Config, errch chan error, version string) *Resolver {
-	var recordGenerator *records.RecordGenerator
-
-    Config := rc.config{
-    }
-
-	recordGenerator = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
+func New(config Config, errch chan error, version string) *Resolver {
 	r := &Resolver{
 		version: version,
-		config:  Config,
-		rs:      recordGenerator,
+		config:  config,
 		// rand.Sources aren't safe for concurrent use, except the global one.
 		// See: https://github.com/golang/go/issues/3611
-		rng:     rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())})
+		rng: rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
 	}
 
 	timeout := 5 * time.Second
@@ -100,14 +93,14 @@ func exchangers(timeout time.Duration, protos ...string) map[string]exchanger.Ex
 func (res *Resolver) records() *records.RecordGenerator {
 	res.rsLock.RLock()
 	defer res.rsLock.RUnlock()
-	return res.rs
+	return res.rg
 }
 
 // LaunchDNS starts a (TCP and UDP) DNS server for the Resolver,
 // returning a error channel to which errors are asynchronously sent.
 func (res *Resolver) LaunchDNS() <-chan error {
 	// Handers for Mesos requests
-	dns.HandleFunc(res.config.Domain+".", panicRecover(res.HandleMesos))
+	dns.HandleFunc(res.rg.Config.Domain+".", panicRecover(res.HandleMesos))
 	// Handler for nonMesos requests
 	dns.HandleFunc(".", panicRecover(res.HandleNonMesos))
 
@@ -146,19 +139,15 @@ func (res *Resolver) Serve(proto string) (<-chan struct{}, <-chan error) {
 	return ch, errCh
 }
 
-// Reload triggers a new state load from the configured mesos masters.
+// Reload parses the incoming RecordGenerator to modify advertised records
 // This method is not goroutine-safe.
-func (res *Resolver) Reload(rg *records.RecordGenerator, err error) {
-	if rg != nil {
-		timestamp := uint32(time.Now().Unix())
-		// may need to refactor for fairness
-		res.rsLock.Lock()
-		defer res.rsLock.Unlock()
-		atomic.StoreUint32(&res.config.SOASerial, timestamp)
-		res.rs = rg
-	} else {
-        logging.Info("Nil RecordGenerator received by main loop. Retaining old state.")
-    }
+func (res *Resolver) Reload(rg *records.RecordGenerator) {
+	timestamp := uint32(time.Now().Unix())
+	// may need to refactor for fairness
+	res.rsLock.Lock()
+	defer res.rsLock.Unlock()
+	atomic.StoreUint32(&rg.Config.SOASerial, timestamp)
+	res.rg = rg
 
 	logging.PrintCurLog()
 }
@@ -218,12 +207,12 @@ func (res *Resolver) formatSOA(dom string) *dns.SOA {
 			Class:  dns.ClassINET,
 			Ttl:    ttl,
 		},
-		Ns:      res.config.SOAMname,
-		Mbox:    res.config.SOARname,
-		Serial:  atomic.LoadUint32(&res.config.SOASerial),
-		Refresh: res.config.SOARefresh,
-		Retry:   res.config.SOARetry,
-		Expire:  res.config.SOAExpire,
+		Ns:      res.rg.Config.SOAMname,
+		Mbox:    res.rg.Config.SOARname,
+		Serial:  atomic.LoadUint32(&res.rg.Config.SOASerial),
+		Refresh: res.rg.Config.SOARefresh,
+		Retry:   res.rg.Config.SOARetry,
+		Expire:  res.rg.Config.SOAExpire,
 		Minttl:  ttl,
 	}
 }
@@ -239,7 +228,7 @@ func (res *Resolver) formatNS(dom string) *dns.NS {
 			Class:  dns.ClassINET,
 			Ttl:    ttl,
 		},
-		Ns: res.config.SOAMname,
+		Ns: res.rg.Config.SOAMname,
 	}
 }
 
@@ -543,7 +532,7 @@ func (res *Resolver) RestHost(req *restful.Request, resp *restful.Response) {
 		logging.Error.Println(err)
 	}
 
-	stats(dom, res.config.Domain+".", len(aRRs) > 0)
+	stats(dom, res.rg.Config.Domain+".", len(aRRs) > 0)
 }
 
 func stats(domain, zone string, success bool) {
@@ -604,7 +593,7 @@ func (res *Resolver) RestService(req *restful.Request, resp *restful.Response) {
 		logging.Error.Println(err)
 	}
 
-	stats(dom, res.config.Domain+".", len(srvRRs) > 0)
+	stats(dom, res.rg.Config.Domain+".", len(srvRRs) > 0)
 }
 
 // panicRecover catches any panics from the resolvers and sets an error

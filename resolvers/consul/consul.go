@@ -5,26 +5,25 @@ import (
 	"strconv"
 	"strings"
 
-	consul "github.com/hashicorp/consul/api"
+	capi "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/records/state"
-	consulconfig "github.com/mesosphere/mesos-dns/resolvers/consul/config"
 )
 
 type ConsulBackend struct {
-	Agents        map[string]*consul.Agent
+	Agents        map[string]*capi.Agent
 	AgentPort     string
-	Client        *consul.Client
-	Config        *consul.Config
+	Client        *capi.Client
+	Config        *capi.Config
 	LookupOrder   []string
 	ServicePrefix string
 	SlaveIDIP     map[string]string
 }
 
-func New(config records.Config, errch chan error, version string) *ConsulBackend {
-	cfg := consulconfig.NewConfig()
-	client, err := consul.NewClient(cfg)
+func New(config capi.Config, errch chan error, version string) *ConsulBackend {
+	cfg := NewConfig()
+	client, err := capi.NewClient(cfg)
 	if err != nil {
 		errch <- err
 		return &ConsulBackend{}
@@ -36,7 +35,7 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 	port := strings.Split(cfg.Address, ":")[1]
 
 	return &ConsulBackend{
-		Agents:        make(map[string]*consul.Agent),
+		Agents:        make(map[string]*capi.Agent),
 		AgentPort:     port,
 		Client:        client,
 		Config:        cfg,
@@ -47,8 +46,8 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 
 }
 
-func (c *ConsulBackend) Reload(rg *records.RecordGenerator, err error) {
-	// Get agent members
+func (c *ConsulBackend) Reload(rg *records.RecordGenerator) {
+    // Get agent members
 	// and initialize client connections
 	c.connectAgents()
 
@@ -76,9 +75,9 @@ func (c *ConsulBackend) connectAgents() error {
 				return err
 			}
 		}
-		cfg := consulconfig.NewConfig()
+		cfg := NewConfig()
 		cfg.Address = agent.Addr + ":" + c.AgentPort
-		client, err := consul.NewClient(cfg)
+		client, err := capi.NewClient(cfg)
 		if err != nil {
 			// How do we want to handle consul agent not being responsive
 			return err
@@ -117,7 +116,7 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
-		err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+		err = c.Agents[slave.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
 			ID:      c.ServicePrefix + ":" + slave.ID,
 			Name:    "slave.mesos",
 			Port:    port,
@@ -165,7 +164,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 		}
 
 		if slave.ID == leader {
-			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+			err = c.Agents[slave.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
 				ID:      c.ServicePrefix + ":" + slave.ID,
 				Name:    "leader.mesos",
 				Port:    port,
@@ -175,7 +174,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 		} else {
 			// Add slave to the pool of masters
 			// master.mesos.service.consul
-			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+			err = c.Agents[slave.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
 				ID:      c.ServicePrefix + ":" + slave.ID,
 				Name:    "master.mesos",
 				Port:    port,
@@ -206,7 +205,7 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
-		err = c.Agents[framework.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
+		err = c.Agents[framework.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
 			ID:      c.ServicePrefix + ":" + framework.Name,
 			Name:    framework.Name,
 			Port:    port,
@@ -273,7 +272,7 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 				log.Println("Something stupid happenend and we cant convert", port, "to int")
 				continue
 			}
-			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&consul.AgentServiceRegistration{
+			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&capi.AgentServiceRegistration{
 				ID:      strings.Join([]string{c.ServicePrefix, task.ID, port}, ":"),
 				Name:    strings.Join([]string{task.Name, framework}, "."),
 				Port:    p,
