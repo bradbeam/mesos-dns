@@ -108,7 +108,7 @@ func (c *ConsulBackend) connectAgents() error {
 }
 
 func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
-	timestamp := time.Now().String()
+	timestamp := time.Now().Format(time.RFC3339Nano)
 	for _, slave := range slaves {
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
@@ -142,7 +142,7 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 }
 
 func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string) {
-	timestamp := time.Now().String()
+	timestamp := time.Now().Format(time.RFC3339Nano)
 
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
@@ -205,7 +205,7 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 }
 
 func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
-	timestamp := time.Now().String()
+	timestamp := time.Now().Format(time.RFC3339Nano)
 	for _, framework := range frameworks {
 
 		// task, pid, name, hostname
@@ -237,7 +237,7 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 }
 
 func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) {
-	timestamp := time.Now().String()
+	timestamp := time.Now().Format(time.RFC3339Nano)
 	for _, task := range tasks {
 		if task.State != "TASK_RUNNING" {
 			continue
@@ -329,7 +329,7 @@ func (c *ConsulBackend) Cleanup() {
 					if "timestamp" != timestamp[0] {
 						continue
 					}
-					servicets, err := time.Parse("2006-01-02 15:04:05.000000000 -0700 MST", timestamp[1])
+					servicets, err := time.Parse(time.RFC3339Nano, timestamp[1])
 					if err != nil {
 						log.Println(err)
 						continue
