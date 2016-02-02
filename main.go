@@ -66,9 +66,9 @@ func main() {
 			if err != nil {
 				logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)
 			} else {
-			    for _, resolver := range resolvers {
-				    resolver.Reload(rg)
-                }
+				for _, resolver := range resolvers {
+					resolver.Reload(rg)
+				}
 			}
 		case masters = <-changed:
 			if len(masters) == 0 || masters[0] == "" { // no leader
@@ -84,9 +84,9 @@ func main() {
 			if err != nil {
 				logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)
 			} else {
-			    for _, resolver := range resolvers {
-				    resolver.Reload(rg)
-                }
+				for _, resolver := range resolvers {
+					resolver.Reload(rg)
+				}
 			}
 		case err := <-errch:
 			logging.Error.Fatal(err)

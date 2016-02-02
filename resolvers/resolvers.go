@@ -24,15 +24,15 @@ func New(config records.Config, errch chan error, version string) []Resolver {
 		// Each backend receives their config as type interface{} or nil.
 		switch strings.ToLower(rType) {
 		case "consul":
-            conf := consul.NewConfig()
+			conf := consul.NewConfig()
 			Merge(config.ResolversConf["consul"].(map[string]interface{}), &conf)
 			resolvers = append(resolvers, consul.New(*conf, errch, version))
 		case "builtin":
-            conf := builtin.NewConfig()
+			conf := builtin.NewConfig()
 			Merge(config.ResolversConf["builtin"].(map[string]interface{}), &conf)
 			resolvers = append(resolvers, builtin.New(*conf, errch, version))
 		case "bind":
-            conf := bind.NewConfig()
+			conf := bind.NewConfig()
 			Merge(config.ResolversConf["bind"].(map[string]interface{}), &conf)
 			resolvers = append(resolvers, bind.New(*conf, errch, version))
 		}

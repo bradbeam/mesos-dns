@@ -1,9 +1,6 @@
 {
 	"ImportPath": "github.com/mesosphere/mesos-dns",
-	"GoVersion": "go1.5.1",
-	"Packages": [
-		"./..."
-	],
+	"GoVersion": "go1.5.2",
 	"Deps": [
 		{
 			"ImportPath": "github.com/emicklei/go-restful",
@@ -20,12 +17,9 @@
 			"Rev": "fca8c8854093a154ff1eb580aae10276ad6b1b5f"
 		},
 		{
-			"ImportPath": "github.com/kylelemons/godebug/diff",
-			"Rev": "21cb3784d9bda523911b96719efba02b7e983256"
-		},
-		{
-			"ImportPath": "github.com/kylelemons/godebug/pretty",
-			"Rev": "21cb3784d9bda523911b96719efba02b7e983256"
+			"ImportPath": "github.com/hashicorp/consul/api",
+			"Comment": "v0.5.2-316-g662ca39",
+			"Rev": "662ca39104a39f52341c9b78314883ea7ebb52d0"
 		},
 		{
 			"ImportPath": "github.com/mesos/mesos-go/detector",

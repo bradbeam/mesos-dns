@@ -305,13 +305,15 @@ func TestHTTP(t *testing.T) {
 }
 
 func fakeDNS() (*Resolver, error) {
-	config := records.NewConfig()
-	config.Masters = []string{"144.76.157.37:5050"}
+	c := records.NewConfig()
+	c.IPSources = []string{"docker", "mesos", "host"}
+	c.Masters = []string{"144.76.157.37:5050"}
+
+	config := NewConfig()
 	config.RecurseOn = false
-	config.IPSources = []string{"docker", "mesos", "host"}
 
 	testch := make(chan error)
-	res := New(config, testch, "0.1.1")
+	res := New(*config, testch, "0.1.1")
 	res.rng.Seed(0) // for deterministic tests
 
 	b, err := ioutil.ReadFile("../../factories/fake.json")
@@ -326,7 +328,7 @@ func fakeDNS() (*Resolver, error) {
 	}
 
 	spec := labels.RFC952
-	err = res.rs.InsertState(sj, "mesos", "mesos-dns.mesos.", "127.0.0.1", res.config.Masters, res.config.IPSources, spec)
+	err = res.rg.InsertState(sj, "mesos", "mesos-dns.mesos.", c.Masters, c.IPSources, spec)
 	if err != nil {
 		return nil, err
 	}

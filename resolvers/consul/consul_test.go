@@ -95,7 +95,7 @@ func TestTaskRecords(t *testing.T) {
 func makeClientServer(t *testing.T) *testutil.TestServer {
 
 	// Make client config
-	conf := api.DefaultConfig()
+	conf := capi.DefaultConfig()
 
 	// Create server
 	// Redirect logs to /dev/null cause we really dont care about consul agent ouput
@@ -128,13 +128,13 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	os.Setenv("CONSUL_HTTP_ADDR", server.HTTPAddr)
 	defer os.Setenv("CONSUL_HTTP_ADDR", "")
 
-	config := records.NewConfig()
+	config := NewConfig()
 	errch := make(chan error)
 	version := "1.0"
 
 	// Hopefully the ENV vars above should allow us
 	// to override the defaults
-	backend := New(config, errch, version)
+	backend := New(*config, errch, version)
 	_, err := backend.Client.Agent().Self()
 	if err != nil {
 		t.Error("Failed to get consul client initialized")

@@ -47,7 +47,7 @@ func New(config capi.Config, errch chan error, version string) *ConsulBackend {
 }
 
 func (c *ConsulBackend) Reload(rg *records.RecordGenerator) {
-    // Get agent members
+	// Get agent members
 	// and initialize client connections
 	c.connectAgents()
 
