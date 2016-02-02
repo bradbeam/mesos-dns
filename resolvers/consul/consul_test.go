@@ -36,27 +36,17 @@ func TestConnectAgents(t *testing.T) {
 
 }
 
-func TestSlaveRecords(t *testing.T) {
+func TestMesosRecords(t *testing.T) {
 	server, backend, sj := recordSetup(t)
 	defer server.Stop()
 
-	backend.insertSlaveRecords(sj.Slaves)
-
-	// 5x Slaves ( 3x master+slave 3x slave )
-	// 1x Consul
-	validateRecords(t, backend, 6)
-}
-
-func TestMasterRecords(t *testing.T) {
-	server, backend, sj := recordSetup(t)
-	defer server.Stop()
-
-	backend.insertMasterRecords(sj.Slaves, sj.Leader)
+	backend.insertMesosRecords(sj.Slaves, sj.Leader)
 
 	// 3x Master
+	// 2x Master
 	// 1x Leader
 	// 1x Consul
-	validateRecords(t, backend, 5)
+	validateRecords(t, backend, 7)
 }
 
 func TestFrameworkRecords(t *testing.T) {
@@ -77,7 +67,7 @@ func TestTaskRecords(t *testing.T) {
 	// Need to do this to populate backend.SlaveIDIP
 	// so we can pull appropriate slave ip mapping
 	// by slave.ID
-	backend.insertSlaveRecords(sj.Slaves)
+	backend.insertMesosRecords(sj.Slaves, sj.Leader)
 
 	for _, framework := range sj.Frameworks {
 		backend.insertTaskRecords(framework.Name, framework.Tasks)
@@ -90,7 +80,7 @@ func TestTaskRecords(t *testing.T) {
 	// 1x nginx-none
 	// 1x nginx-bridge
 	// 2x4 fluentd
-	validateRecords(t, backend, 18)
+	validateRecords(t, backend, 19)
 }
 
 func TestCleanupRecords(t *testing.T) {
@@ -100,14 +90,14 @@ func TestCleanupRecords(t *testing.T) {
 	// Need to do this to populate backend.SlaveIDIP
 	// so we can pull appropriate slave ip mapping
 	// by slave.ID
-	backend.insertSlaveRecords(sj.Slaves)
+	backend.insertMesosRecords(sj.Slaves, sj.Leader)
 
 	for _, framework := range sj.Frameworks {
 		backend.insertTaskRecords(framework.Name, framework.Tasks)
 	}
 
 	// We'll go ahead and have all the tasks there
-	validateRecords(t, backend, 18)
+	validateRecords(t, backend, 19)
 
 	time.Sleep(time.Duration(2*backend.Refresh)*time.Second + 1)
 	backend.Cleanup()
@@ -123,8 +113,7 @@ func TestHealthchecks(t *testing.T) {
 	// Need to do this to populate backend.SlaveIDIP
 	// so we can pull appropriate slave ip mapping
 	// by slave.ID
-	backend.insertSlaveRecords(sj.Slaves)
-	backend.insertMasterRecords(sj.Slaves, sj.Leader)
+	backend.insertMesosRecords(sj.Slaves, sj.Leader)
 	backend.insertFrameworkRecords(sj.Frameworks)
 	// Post KV for consul healthchecks
 	// nginx/port

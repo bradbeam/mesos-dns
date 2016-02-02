@@ -60,8 +60,7 @@ func (c *ConsulBackend) Reload(rg *records.RecordGenerator, err error) {
 	c.connectAgents()
 
 	// Going on the assumption of revamped rg structs
-	c.insertMasterRecords(rg.State.Slaves, rg.State.Leader)
-	c.insertSlaveRecords(rg.State.Slaves)
+	c.insertMesosRecords(rg.State.Slaves, rg.State.Leader)
 	c.insertFrameworkRecords(rg.State.Frameworks)
 	for _, framework := range rg.State.Frameworks {
 		c.insertTaskRecords(framework.Name, framework.Tasks)
@@ -110,40 +109,7 @@ func (c *ConsulBackend) connectAgents() error {
 	return nil
 }
 
-func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
-	for _, slave := range slaves {
-		port, err := strconv.Atoi(slave.PID.Port)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		if _, ok := c.Agents[slave.PID.Host]; !ok {
-			log.Println("Unknown consul agent", slave.PID.Host)
-			continue
-		}
-
-		// We'll need this for service registration to the appropriate
-		// slaves
-		c.SlaveIDIP[slave.ID] = slave.PID.Host
-
-		// Pull out only the hostname, not the FQDN
-		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
-
-		// Add slave to the pool of slaves
-		// mesos.service.consul
-		// slave.mesos.service.consul
-		// hostname.mesos.service.consul
-		service := createService(strings.Join([]string{c.ServicePrefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, []string{"slave", c.SlaveIDHostname[slave.ID]})
-		err = c.Agents[slave.PID.Host].ServiceRegister(service)
-
-		if err != nil {
-			log.Println(err)
-		}
-	}
-}
-
-func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string) {
+func (c *ConsulBackend) insertMesosRecords(slaves []state.Slave, leader string) {
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
@@ -162,24 +128,31 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 	}
 	slaves = append(slaves, lead)
 	for _, slave := range slaves {
-		if slave.Attrs.Master == "false" {
-			// Slave node
-			continue
+		tags := []string{"slave", c.SlaveIDHostname[slave.ID]}
+
+		if slave.Attrs.Master == "true" {
+			tags = append(tags, "master")
 		}
+		if slave.ID == leader {
+			tags = append(tags, "leader")
+		}
+
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
 			log.Println(err)
 			continue
 		}
 
+		// We'll need this for service registration to the appropriate
+		// slaves
+		c.SlaveIDIP[slave.ID] = slave.PID.Host
+
+		// Pull out only the hostname, not the FQDN
+		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
+
 		if _, ok := c.Agents[slave.PID.Host]; !ok {
 			log.Println("Unknown consul agent", slave.PID.Host)
 			continue
-		}
-
-		tags := []string{"master", c.SlaveIDHostname[slave.ID]}
-		if slave.ID == leader {
-			tags = append(tags, "leader")
 		}
 
 		service := createService(strings.Join([]string{c.ServicePrefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, tags)
