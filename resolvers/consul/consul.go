@@ -111,7 +111,6 @@ func (c *ConsulBackend) connectAgents() error {
 }
 
 func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
-	timestamp := time.Now().Format(time.RFC3339Nano)
 	for _, slave := range slaves {
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
@@ -127,17 +126,16 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 		// We'll need this for service registration to the appropriate
 		// slaves
 		c.SlaveIDIP[slave.ID] = slave.PID.Host
-		c.SlaveIDHostname[slave.ID] = slave.Hostname
+
+		// Pull out only the hostname, not the FQDN
+		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
 
 		// Add slave to the pool of slaves
+		// mesos.service.consul
 		// slave.mesos.service.consul
-		err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      c.ServicePrefix + ":" + slave.ID,
-			Name:    "slave.mesos",
-			Port:    port,
-			Address: slave.PID.Host,
-			Tags:    []string{"timestamp%" + timestamp},
-		})
+		// hostname.mesos.service.consul
+		service := createService(strings.Join([]string{c.ServicePrefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, []string{"slave", c.SlaveIDHostname[slave.ID]})
+		err = c.Agents[slave.PID.Host].ServiceRegister(service)
 
 		if err != nil {
 			log.Println(err)
@@ -146,8 +144,6 @@ func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
 }
 
 func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string) {
-	timestamp := time.Now().Format(time.RFC3339Nano)
-
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
@@ -181,35 +177,21 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 			continue
 		}
 
+		tags := []string{"master", c.SlaveIDHostname[slave.ID]}
 		if slave.ID == leader {
-			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      c.ServicePrefix + ":" + slave.ID,
-				Name:    "leader.mesos",
-				Port:    port,
-				Address: slave.PID.Host,
-				Tags:    []string{"timestamp%" + timestamp},
-			})
+			tags = append(tags, "leader")
+		}
 
-		} else {
-			// Add slave to the pool of masters
-			// master.mesos.service.consul
-			err = c.Agents[slave.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      c.ServicePrefix + ":" + slave.ID,
-				Name:    "master.mesos",
-				Port:    port,
-				Address: slave.PID.Host,
-				Tags:    []string{"timestamp%" + timestamp},
-			})
+		service := createService(strings.Join([]string{c.ServicePrefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, tags)
+		err = c.Agents[slave.PID.Host].ServiceRegister(service)
 
-			if err != nil {
-				log.Println(err)
-			}
+		if err != nil {
+			log.Println(err)
 		}
 	}
 }
 
 func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
-	timestamp := time.Now().Format(time.RFC3339Nano)
 	for _, framework := range frameworks {
 
 		// task, pid, name, hostname
@@ -226,14 +208,8 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
-		err = c.Agents[framework.PID.Host].ServiceRegister(&consul.AgentServiceRegistration{
-			ID:      c.ServicePrefix + ":" + framework.Name,
-			Name:    framework.Name,
-			Port:    port,
-			Address: framework.PID.Host,
-			Tags:    []string{"timestamp%" + timestamp},
-		})
-
+		service := createService(strings.Join([]string{c.ServicePrefix, framework.Name}, ":"), framework.Name, framework.PID.Host, port, []string{})
+		err = c.Agents[framework.PID.Host].ServiceRegister(service)
 		if err != nil {
 			log.Println(err)
 		}
@@ -259,21 +235,20 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 
 		var services []*consul.AgentServiceRegistration
 
-		// Create a service registration for the base service
-		services = append(services, createService(strings.Join([]string{c.ServicePrefix, task.ID}, ":"), strings.Join([]string{task.Name, framework}, "."), address, 0))
-
 		// Create a service registration for every port
-		for _, port := range task.Ports() {
-			p, err := strconv.Atoi(port)
-			if err != nil {
-				log.Println("Something stupid happenend and we cant convert", port, "to int")
-				continue
+		if len(task.Ports()) == 0 {
+			// Create a service registration for the base service
+			services = append(services, createService(strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID}, ":"), task.Name, address, 0, []string{c.SlaveIDHostname[task.SlaveID]}))
+		} else {
+			for _, port := range task.Ports() {
+				p, err := strconv.Atoi(port)
+				if err != nil {
+					log.Println("Something stupid happenend and we cant convert", port, "to int")
+					continue
+				}
+				// Create a service registration for each port
+				services = append(services, createService(strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":"), task.Name, address, p, []string{c.SlaveIDHostname[task.SlaveID]}))
 			}
-
-			// Register task.framework
-			services = append(services, createService(strings.Join([]string{c.ServicePrefix, task.ID, port}, ":"), strings.Join([]string{task.Name, framework}, "."), address, p))
-			// Register slave.task.framework
-			services = append(services, createService(strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":"), strings.Join([]string{c.SlaveIDHostname[task.SlaveID], task.Name, framework}, "."), address, p))
 		}
 
 		// Register Healthchecks
@@ -412,13 +387,13 @@ func (c *ConsulBackend) getHealthChecks(task state.Task) []*consul.AgentCheckReg
 
 }
 
-func createService(id string, name string, address string, port int) *consul.AgentServiceRegistration {
+func createService(id string, name string, address string, port int, tags []string) *consul.AgentServiceRegistration {
 	timestamp := time.Now().Format(time.RFC3339Nano)
 	asr := &consul.AgentServiceRegistration{
 		ID:      id,
 		Name:    name,
 		Address: address,
-		Tags:    []string{"timestamp%" + timestamp},
+		Tags:    append([]string{"timestamp%" + timestamp}, tags...),
 	}
 	if port > 0 {
 		asr.Port = port

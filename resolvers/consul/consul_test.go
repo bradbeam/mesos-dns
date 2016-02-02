@@ -85,12 +85,12 @@ func TestTaskRecords(t *testing.T) {
 
 	// 1x Consul
 	// 5x slave
+	// 1x nginx
 	// 1x nginx-host
 	// 1x nginx-none
 	// 1x nginx-bridge
 	// 2x4 fluentd
-	validateRecords(t, backend, 36)
-	//validateRecords(t, backend, 12)
+	validateRecords(t, backend, 18)
 }
 
 func TestCleanupRecords(t *testing.T) {
@@ -106,8 +106,8 @@ func TestCleanupRecords(t *testing.T) {
 		backend.insertTaskRecords(framework.Name, framework.Tasks)
 	}
 
-	// We'll go ahead and have all the
-	validateRecords(t, backend, 36)
+	// We'll go ahead and have all the tasks there
+	validateRecords(t, backend, 18)
 
 	time.Sleep(time.Duration(2*backend.Refresh)*time.Second + 1)
 	backend.Cleanup()
@@ -124,7 +124,8 @@ func TestHealthchecks(t *testing.T) {
 	// so we can pull appropriate slave ip mapping
 	// by slave.ID
 	backend.insertSlaveRecords(sj.Slaves)
-
+	backend.insertMasterRecords(sj.Slaves, sj.Leader)
+	backend.insertFrameworkRecords(sj.Frameworks)
 	// Post KV for consul healthchecks
 	// nginx/port
 	// nginx/http
@@ -162,16 +163,30 @@ func TestHealthchecks(t *testing.T) {
 
 	// 1x Consul
 	// 5x slave
-	// 3x nginx-no-port
+	// 1x nginx
 	// 1x nginx-host
-	// 3x nginx-none
-	// 3x nginx-bridge
-	// 4x5 myapp ( base, 2x2 ports )
-	validateRecords(t, backend, 36)
+	// 1x nginx-none
+	// 1x nginx-bridge
+	// 2x4 fluentd
+	validateRecords(t, backend, 20)
 
 	//validateRecords(t, backend, 12)
 	// Probably need to create a validateChecks func
 	validateChecks(t, backend, 2)
+	/*
+		for _, agent := range backend.Agents {
+			services, err := agent.Services()
+			if err != nil {
+				t.Error("Unable to get list of services back from agent.", err)
+				return
+			}
+
+			for k, info := range services {
+				t.Error(" -", k, "=>", info.Address, "=>", info.Service, "=>", info.ID)
+			}
+
+		}
+	*/
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
@@ -271,7 +286,6 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 
 func validateChecks(t *testing.T, backend *ConsulBackend, expected int) {
 	for _, agent := range backend.Agents {
-		t.Log(agent.NodeName())
 		checks, err := agent.Checks()
 		if err != nil {
 			t.Error(err)
