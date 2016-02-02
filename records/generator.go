@@ -32,6 +32,7 @@ type rrs map[string][]string
 type RecordGenerator struct {
 	As         rrs
 	SRVs       rrs
+	State      state.State
 	SlaveIPs   map[string]string
 	httpClient http.Client
 }
@@ -61,6 +62,8 @@ func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
 	if c.EnforceRFC952 {
 		hostSpec = labels.RFC952
 	}
+
+	rg.State = sj
 
 	return rg.InsertState(sj, c.Domain, c.Builtin.SOARname, c.Listener, masters, c.IPSources, hostSpec)
 }
