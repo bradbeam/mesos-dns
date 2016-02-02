@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"encoding/json"
 	"log"
 	"strconv"
 	"strings"
@@ -240,7 +241,6 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 }
 
 func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) {
-	timestamp := time.Now().Format(time.RFC3339Nano)
 	for _, task := range tasks {
 		if task.State != "TASK_RUNNING" {
 			continue
@@ -253,42 +253,17 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 			continue
 		}
 
-		var address string
-		for _, lookup := range c.LookupOrder {
-			lookupkey := strings.Split(lookup, ":")
-			switch lookupkey[0] {
-			case "mesos":
-				address = task.IP("mesos")
-			case "docker":
-				address = task.IP("docker")
-			case "netinfo":
-				address = task.IP("netinfo")
-			case "host":
-				address = task.IP("host")
-			case "label":
-				if len(lookupkey) != 2 {
-					log.Println("Lookup order label is not in proper format `label:labelname`")
-					continue
-				}
-				addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
-				if len(addresses) > 0 {
-					address = addresses[0]
-				}
-			}
+		address := c.getAddress(task)
 
-			if address != "" {
-				break
-			}
-		}
+		healthchecks := c.getHealthChecks(task)
 
-		// If still empty, set to host IP
-		if address == "" {
-			address = c.SlaveIDIP[task.SlaveID]
-		}
+		var services []*consul.AgentServiceRegistration
+
+		// Create a service registration for the base service
+		services = append(services, createService(strings.Join([]string{c.ServicePrefix, task.ID}, ":"), strings.Join([]string{task.Name, framework}, "."), address, 0))
 
 		// Create a service registration for every port
 		for _, port := range task.Ports() {
-			//log.Println("Registering task:", task.ID, address, port)
 			p, err := strconv.Atoi(port)
 			if err != nil {
 				log.Println("Something stupid happenend and we cant convert", port, "to int")
@@ -296,27 +271,28 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 			}
 
 			// Register task.framework
-			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      strings.Join([]string{c.ServicePrefix, task.ID, port}, ":"),
-				Name:    strings.Join([]string{task.Name, framework}, "."),
-				Port:    p,
-				Address: address,
-				Tags:    []string{"timestamp%" + timestamp},
-			})
+			services = append(services, createService(strings.Join([]string{c.ServicePrefix, task.ID, port}, ":"), strings.Join([]string{task.Name, framework}, "."), address, p))
+			// Register slave.task.framework
+			services = append(services, createService(strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":"), strings.Join([]string{c.SlaveIDHostname[task.SlaveID], task.Name, framework}, "."), address, p))
+		}
+
+		// Register Healthchecks
+		for _, service := range services {
+			//log.Println("Registering service", service.ID)
+			err := c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(service)
 			if err != nil {
 				log.Println(err)
+				continue
 			}
 
-			// Register slave.task.framework
-			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&consul.AgentServiceRegistration{
-				ID:      strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":"),
-				Name:    strings.Join([]string{c.SlaveIDHostname[task.SlaveID], task.Name, framework}, "."),
-				Port:    p,
-				Address: address,
-				Tags:    []string{"timestamp%" + timestamp},
-			})
-			if err != nil {
-				log.Println(err)
+			for _, healthcheck := range healthchecks {
+
+				//log.Println("Registering healthcheck", healthcheck.ID, "for service", service.ID)
+				healthcheck.ServiceID = service.ID
+				err = c.Agents[c.SlaveIDIP[task.SlaveID]].CheckRegister(healthcheck)
+				if err != nil {
+					log.Println(err)
+				}
 			}
 		}
 	}
@@ -364,4 +340,89 @@ func (c *ConsulBackend) Cleanup() {
 		}()
 		wg.Wait()
 	}
+}
+
+func (c *ConsulBackend) getAddress(task state.Task) string {
+
+	var address string
+	for _, lookup := range c.LookupOrder {
+		lookupkey := strings.Split(lookup, ":")
+		switch lookupkey[0] {
+		case "mesos":
+			address = task.IP("mesos")
+		case "docker":
+			address = task.IP("docker")
+		case "netinfo":
+			address = task.IP("netinfo")
+		case "host":
+			address = task.IP("host")
+		case "label":
+			if len(lookupkey) != 2 {
+				log.Println("Lookup order label is not in proper format `label:labelname`")
+				continue
+			}
+			addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
+			if len(addresses) > 0 {
+				address = addresses[0]
+			}
+		}
+
+		if address != "" {
+			break
+		}
+	}
+
+	// If still empty, set to host IP
+	if address == "" {
+		address = c.SlaveIDIP[task.SlaveID]
+	}
+
+	return address
+}
+
+func (c *ConsulBackend) getHealthChecks(task state.Task) []*consul.AgentCheckRegistration {
+
+	// Look up KV for defined healthchecks
+	kv := c.Client.KV()
+	var hc []*consul.AgentCheckRegistration
+	for _, label := range task.Labels {
+		if label.Key != "ConsulHealthCheckKeys" {
+			continue
+		}
+		for _, endpoint := range strings.Split(label.Value, ",") {
+			pair, _, err := kv.Get("healthchecks/"+endpoint, nil)
+			// If key does not exist in consul, pair is nil
+			if pair == nil || err != nil {
+				log.Println("Healthcheck healthchecks/"+endpoint, "not found in consul, skipping")
+				continue
+			}
+			check := &consul.AgentCheckRegistration{}
+			err = json.Unmarshal(pair.Value, check)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			hc = append(hc, check)
+		}
+	}
+	// Maybe keep this in for debug logging
+	//log.Println("Found", len(hc), "healthchecks for", task.Name)
+
+	return hc
+
+}
+
+func createService(id string, name string, address string, port int) *consul.AgentServiceRegistration {
+	timestamp := time.Now().Format(time.RFC3339Nano)
+	asr := &consul.AgentServiceRegistration{
+		ID:      id,
+		Name:    name,
+		Address: address,
+		Tags:    []string{"timestamp%" + timestamp},
+	}
+	if port > 0 {
+		asr.Port = port
+	}
+
+	return asr
 }

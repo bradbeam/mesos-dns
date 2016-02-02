@@ -89,7 +89,7 @@ func TestTaskRecords(t *testing.T) {
 	// 1x nginx-none
 	// 1x nginx-bridge
 	// 2x4 fluentd
-	validateRecords(t, backend, 28)
+	validateRecords(t, backend, 36)
 	//validateRecords(t, backend, 12)
 }
 
@@ -107,13 +107,71 @@ func TestCleanupRecords(t *testing.T) {
 	}
 
 	// We'll go ahead and have all the
-	validateRecords(t, backend, 28)
+	validateRecords(t, backend, 36)
 
 	time.Sleep(time.Duration(2*backend.Refresh)*time.Second + 1)
 	backend.Cleanup()
 	// All but the consul record should be removed
 	validateRecords(t, backend, 1)
 
+}
+
+func TestHealthchecks(t *testing.T) {
+	server, backend, sj := recordSetup(t)
+	defer server.Stop()
+
+	// Need to do this to populate backend.SlaveIDIP
+	// so we can pull appropriate slave ip mapping
+	// by slave.ID
+	backend.insertSlaveRecords(sj.Slaves)
+
+	// Post KV for consul healthchecks
+	// nginx/port
+	// nginx/http
+	kv := backend.Client.KV()
+	nport := &api.AgentCheckRegistration{
+		ID:   "nginx/port",
+		Name: "nginx/port",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TCP:      "localhost:80",
+			Interval: "5s",
+		},
+	}
+
+	nhttp := &api.AgentCheckRegistration{
+		ID:   "nginx/http",
+		Name: "nginx/http",
+		AgentServiceCheck: api.AgentServiceCheck{
+			HTTP:     "http://localhost",
+			Interval: "5s",
+		},
+	}
+	for _, check := range []*api.AgentCheckRegistration{nport, nhttp} {
+		b, err := json.Marshal(check)
+		t.Log("Creating healthcheck healthchecks/" + check.ID)
+		p := &api.KVPair{Key: "healthchecks/" + check.ID, Value: b}
+		_, err = kv.Put(p, nil)
+		if err != nil {
+			t.Error(err)
+		}
+	}
+
+	for _, framework := range sj.Frameworks {
+		backend.insertTaskRecords(framework.Name, framework.Tasks)
+	}
+
+	// 1x Consul
+	// 5x slave
+	// 3x nginx-no-port
+	// 1x nginx-host
+	// 3x nginx-none
+	// 3x nginx-bridge
+	// 4x5 myapp ( base, 2x2 ports )
+	validateRecords(t, backend, 36)
+
+	//validateRecords(t, backend, 12)
+	// Probably need to create a validateChecks func
+	validateChecks(t, backend, 2)
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
@@ -209,4 +267,23 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 		}
 	}
 
+}
+
+func validateChecks(t *testing.T, backend *ConsulBackend, expected int) {
+	for _, agent := range backend.Agents {
+		t.Log(agent.NodeName())
+		checks, err := agent.Checks()
+		if err != nil {
+			t.Error(err)
+		}
+
+		if len(checks) != expected {
+			t.Error("Did not get back", expected, "checks. Got back", len(checks))
+			t.Error("Checks:")
+			for k, info := range checks {
+				t.Error(" -", k, "=>", info.ServiceID)
+			}
+
+		}
+	}
 }
