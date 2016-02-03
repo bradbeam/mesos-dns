@@ -2,6 +2,7 @@ package consul
 
 import (
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -19,7 +20,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestConnectAgents(t *testing.T) {
-	server, backend, _ := recordSetup(t)
+	server, backend := recordSetup(t)
 	defer server.Stop()
 
 	// Let's see what happens the second time
@@ -37,23 +38,21 @@ func TestConnectAgents(t *testing.T) {
 }
 
 func TestMesosRecords(t *testing.T) {
-	server, backend, sj := recordSetup(t)
+	server, backend := recordSetup(t)
 	defer server.Stop()
 
-	backend.insertMesosRecords(sj.Slaves, sj.Leader)
+	backend.insertMesosRecords()
 
-	// 3x Master
-	// 2x Master
-	// 1x Leader
+	// 5x Slave
 	// 1x Consul
 	validateRecords(t, backend, 7)
 }
 
 func TestFrameworkRecords(t *testing.T) {
-	server, backend, sj := recordSetup(t)
+	server, backend := recordSetup(t)
 	defer server.Stop()
 
-	backend.insertFrameworkRecords(sj.Frameworks)
+	backend.insertFrameworkRecords()
 
 	// 1x Marathon
 	// 1x Consul
@@ -61,16 +60,16 @@ func TestFrameworkRecords(t *testing.T) {
 }
 
 func TestTaskRecords(t *testing.T) {
-	server, backend, sj := recordSetup(t)
+	server, backend := recordSetup(t)
 	defer server.Stop()
 
 	// Need to do this to populate backend.SlaveIDIP
 	// so we can pull appropriate slave ip mapping
 	// by slave.ID
-	backend.insertMesosRecords(sj.Slaves, sj.Leader)
+	backend.insertMesosRecords()
 
-	for _, framework := range sj.Frameworks {
-		backend.insertTaskRecords(framework.Name, framework.Tasks)
+	for _, framework := range backend.State.Frameworks {
+		backend.insertTaskRecords(framework.Tasks)
 	}
 
 	// 1x Consul
@@ -79,27 +78,31 @@ func TestTaskRecords(t *testing.T) {
 	// 1x nginx-host
 	// 1x nginx-none
 	// 1x nginx-bridge
-	// 2x4 fluentd
+	// 2x4 myapp
 	validateRecords(t, backend, 19)
 }
 
 func TestCleanupRecords(t *testing.T) {
-	server, backend, sj := recordSetup(t)
+	server, backend := recordSetup(t)
 	defer server.Stop()
 
-	// Need to do this to populate backend.SlaveIDIP
-	// so we can pull appropriate slave ip mapping
-	// by slave.ID
-	backend.insertMesosRecords(sj.Slaves, sj.Leader)
+	// Shorten our TTL for testing
+	backend.Refresh = 1
+	rg := &records.RecordGenerator{State: backend.State}
+	// This should handle all the record generation
+	// and do a cleanup afterwards
+	backend.Reload(rg, errors.New(""))
 
-	for _, framework := range sj.Frameworks {
-		backend.insertTaskRecords(framework.Name, framework.Tasks)
-	}
-
-	// We'll go ahead and have all the tasks there
-	validateRecords(t, backend, 19)
-
+	// We'll go ahead and verify all the tasks there
+	validateRecords(t, backend, 20)
+	// Try a sample refresh cycle
+	time.Sleep(time.Duration(backend.Refresh) * time.Second)
+	// Nothing should change aside from TTL stamp
+	backend.Reload(rg, errors.New(""))
+	validateRecords(t, backend, 20)
+	// Wait for TTLs to expire
 	time.Sleep(time.Duration(2*backend.Refresh)*time.Second + 1)
+	// Do an explicit cleanup
 	backend.Cleanup()
 	// All but the consul record should be removed
 	validateRecords(t, backend, 1)
@@ -107,14 +110,9 @@ func TestCleanupRecords(t *testing.T) {
 }
 
 func TestHealthchecks(t *testing.T) {
-	server, backend, sj := recordSetup(t)
+	server, backend := recordSetup(t)
 	defer server.Stop()
 
-	// Need to do this to populate backend.SlaveIDIP
-	// so we can pull appropriate slave ip mapping
-	// by slave.ID
-	backend.insertMesosRecords(sj.Slaves, sj.Leader)
-	backend.insertFrameworkRecords(sj.Frameworks)
 	// Post KV for consul healthchecks
 	// nginx/port
 	// nginx/http
@@ -136,9 +134,9 @@ func TestHealthchecks(t *testing.T) {
 			Interval: "5s",
 		},
 	}
+
 	for _, check := range []*api.AgentCheckRegistration{nport, nhttp} {
 		b, err := json.Marshal(check)
-		t.Log("Creating healthcheck healthchecks/" + check.ID)
 		p := &api.KVPair{Key: "healthchecks/" + check.ID, Value: b}
 		_, err = kv.Put(p, nil)
 		if err != nil {
@@ -146,9 +144,8 @@ func TestHealthchecks(t *testing.T) {
 		}
 	}
 
-	for _, framework := range sj.Frameworks {
-		backend.insertTaskRecords(framework.Name, framework.Tasks)
-	}
+	rg := &records.RecordGenerator{State: backend.State}
+	backend.Reload(rg, errors.New(""))
 
 	// 1x Consul
 	// 5x slave
@@ -156,26 +153,10 @@ func TestHealthchecks(t *testing.T) {
 	// 1x nginx-host
 	// 1x nginx-none
 	// 1x nginx-bridge
-	// 2x4 fluentd
+	// 2x4 myapp
 	validateRecords(t, backend, 20)
 
-	//validateRecords(t, backend, 12)
-	// Probably need to create a validateChecks func
 	validateChecks(t, backend, 2)
-	/*
-		for _, agent := range backend.Agents {
-			services, err := agent.Services()
-			if err != nil {
-				t.Error("Unable to get list of services back from agent.", err)
-				return
-			}
-
-			for k, info := range services {
-				t.Error(" -", k, "=>", info.Address, "=>", info.Service, "=>", info.ID)
-			}
-
-		}
-	*/
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
@@ -228,7 +209,7 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	return server, backend
 }
 
-func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend, state.State) {
+func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	sj := loadState(t)
 
 	server, backend := backendSetup(t)
@@ -248,8 +229,9 @@ func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend, state.Stat
 	}
 	rg.State.Leader = "master@127.0.0.1:5050"
 	rg.State.Frameworks[0].PID.Host = "127.0.0.1"
+	backend.State = rg.State
 
-	return server, backend, rg.State
+	return server, backend
 }
 
 func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {

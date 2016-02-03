@@ -25,6 +25,7 @@ type ConsulBackend struct {
 	ServicePrefix   string
 	SlaveIDIP       map[string]string
 	SlaveIDHostname map[string]string
+	State           state.State
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
@@ -50,20 +51,23 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 		ServicePrefix:   "mesos-dns",
 		SlaveIDIP:       make(map[string]string),
 		SlaveIDHostname: make(map[string]string),
+		State:           state.State{},
 	}
 
 }
 
 func (c *ConsulBackend) Reload(rg *records.RecordGenerator, err error) {
+	// Get a snapshot of state.json
+	c.State = rg.State
 	// Get agent members
 	// and initialize client connections
 	c.connectAgents()
 
 	// Going on the assumption of revamped rg structs
-	c.insertMesosRecords(rg.State.Slaves, rg.State.Leader)
-	c.insertFrameworkRecords(rg.State.Frameworks)
+	c.insertMesosRecords()
+	c.insertFrameworkRecords()
 	for _, framework := range rg.State.Frameworks {
-		c.insertTaskRecords(framework.Name, framework.Tasks)
+		c.insertTaskRecords(framework.Tasks)
 	}
 
 	c.Cleanup()
@@ -109,16 +113,16 @@ func (c *ConsulBackend) connectAgents() error {
 	return nil
 }
 
-func (c *ConsulBackend) insertMesosRecords(slaves []state.Slave, leader string) {
+func (c *ConsulBackend) insertMesosRecords() {
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
-		ID:       leader,
-		Hostname: leader,
+		ID:       c.State.Leader,
+		Hostname: c.State.Leader,
 		PID: state.PID{
 			&upid.UPID{
-				Host: strings.Split(strings.Split(leader, "@")[1], ":")[0],
-				Port: strings.Split(strings.Split(leader, "@")[1], ":")[1],
+				Host: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[0],
+				Port: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[1],
 			},
 		},
 		Attrs: state.Attributes{
@@ -126,6 +130,8 @@ func (c *ConsulBackend) insertMesosRecords(slaves []state.Slave, leader string) 
 		},
 		Active: true,
 	}
+
+	slaves := c.State.Slaves
 	slaves = append(slaves, lead)
 	for _, slave := range slaves {
 		tags := []string{"slave", c.SlaveIDHostname[slave.ID]}
@@ -133,7 +139,7 @@ func (c *ConsulBackend) insertMesosRecords(slaves []state.Slave, leader string) 
 		if slave.Attrs.Master == "true" {
 			tags = append(tags, "master")
 		}
-		if slave.ID == leader {
+		if slave.ID == lead.ID {
 			tags = append(tags, "leader")
 		}
 
@@ -164,8 +170,8 @@ func (c *ConsulBackend) insertMesosRecords(slaves []state.Slave, leader string) 
 	}
 }
 
-func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
-	for _, framework := range frameworks {
+func (c *ConsulBackend) insertFrameworkRecords() {
+	for _, framework := range c.State.Frameworks {
 
 		// task, pid, name, hostname
 		port, err := strconv.Atoi(framework.PID.Port)
@@ -189,7 +195,7 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 	}
 }
 
-func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) {
+func (c *ConsulBackend) insertTaskRecords(tasks []state.Task) {
 	for _, task := range tasks {
 		if task.State != "TASK_RUNNING" {
 			continue
