@@ -5294,7 +5294,16 @@
                     "executor_id": "",
                     "framework_id": "20160107-001256-134875658-5050-27524-0000",
                     "id": "nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230",
-                    "labels": [],
+                    "labels": [
+                        {
+                            "key": "environment",
+                            "value": "prod"
+                        },
+                        {
+                            "key": "ConsulHealthCheckKeys",
+                            "value": "nginx/port,nginx/http"
+                        }
+                    ],
                     "name": "nginx-no-port",
                     "resources": {
                         "cpus": 1,

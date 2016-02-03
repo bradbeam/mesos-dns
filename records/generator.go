@@ -33,8 +33,8 @@ type RecordGenerator struct {
 	As         rrs
 	Config     Config
 	SRVs       rrs
-	SlaveIPs   map[string]string
 	State      state.State
+	SlaveIPs   map[string]string
 	httpClient http.Client
 }
 

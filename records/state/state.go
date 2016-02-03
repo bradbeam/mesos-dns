@@ -84,7 +84,8 @@ type Task struct {
 	Resources     `json:"resources"`
 	DiscoveryInfo DiscoveryInfo `json:"discovery"`
 
-	SlaveIP string `json:"-"`
+	SlaveIP string  `json:"-"`
+	Labels  []Label `json:"labels,omitempty"`
 }
 
 // HasDiscoveryInfo return whether the DiscoveryInfo was provided in the state.json

@@ -1,9 +1,12 @@
 package consul
 
 import (
+	"encoding/json"
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
@@ -12,13 +15,16 @@ import (
 )
 
 type ConsulBackend struct {
-	Agents        map[string]*capi.Agent
-	AgentPort     string
-	Client        *capi.Client
-	Config        *capi.Config
-	LookupOrder   []string
-	ServicePrefix string
-	SlaveIDIP     map[string]string
+	Agents          map[string]*capi.Agent
+	AgentPort       string
+	Client          *capi.Client
+	Config          *capi.Config
+	LookupOrder     []string
+	Refresh         int
+	ServicePrefix   string
+	SlaveIDHostname map[string]string
+	SlaveIDIP       map[string]string
+	State           state.State
 }
 
 func New(config capi.Config, errch chan error, rg *records.RecordGenerator, version string) *ConsulBackend {
@@ -35,26 +41,34 @@ func New(config capi.Config, errch chan error, rg *records.RecordGenerator, vers
 	port := strings.Split(cfg.Address, ":")[1]
 
 	return &ConsulBackend{
-		Agents:        make(map[string]*capi.Agent),
-		AgentPort:     port,
-		Client:        client,
-		Config:        cfg,
-		LookupOrder:   []string{"docker", "netinfo", "host"},
-		ServicePrefix: "mesos-dns",
-		SlaveIDIP:     make(map[string]string),
+		Agents:          make(map[string]*capi.Agent),
+		AgentPort:       port,
+		Client:          client,
+		Config:          cfg,
+		LookupOrder:     []string{"docker", "netinfo", "host"},
+		ServicePrefix:   "mesos-dns",
+		SlaveIDHostname: make(map[string]string),
+		SlaveIDIP:       make(map[string]string),
+		State:           state.State{},
 	}
 
 }
 
 func (c *ConsulBackend) Reload(rg *records.RecordGenerator) {
+	// Get a snapshot of state.json
+	c.State = rg.State
 	// Get agent members
 	// and initialize client connections
 	c.connectAgents()
 
 	// Going on the assumption of revamped rg structs
-	c.insertMasterRecords(rg.State.Slaves, rg.State.Leader)
-	c.insertSlaveRecords(rg.State.Slaves)
-	c.insertFrameworkRecords(rg.State.Frameworks)
+	c.insertMesosRecords()
+	c.insertFrameworkRecords()
+	for _, framework := range rg.State.Frameworks {
+		c.insertTaskRecords(framework.Tasks)
+	}
+
+	c.Cleanup()
 }
 
 func (c *ConsulBackend) connectAgents() error {
@@ -97,48 +111,16 @@ func (c *ConsulBackend) connectAgents() error {
 	return nil
 }
 
-func (c *ConsulBackend) insertSlaveRecords(slaves []state.Slave) {
-	for _, slave := range slaves {
-		port, err := strconv.Atoi(slave.PID.Port)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		if _, ok := c.Agents[slave.PID.Host]; !ok {
-			log.Println("Unknown consul agent", slave.PID.Host)
-			continue
-		}
-
-		// We'll need this for service registration to the appropriate
-		// slaves
-		c.SlaveIDIP[slave.ID] = slave.PID.Host
-
-		// Add slave to the pool of slaves
-		// slave.mesos.service.consul
-		err = c.Agents[slave.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
-			ID:      c.ServicePrefix + ":" + slave.ID,
-			Name:    "slave.mesos",
-			Port:    port,
-			Address: slave.PID.Host,
-		})
-
-		if err != nil {
-			log.Println(err)
-		}
-	}
-}
-
-func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string) {
+func (c *ConsulBackend) insertMesosRecords() {
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
-		ID:       leader,
-		Hostname: leader,
+		ID:       c.State.Leader,
+		Hostname: c.State.Leader,
 		PID: state.PID{
 			&upid.UPID{
-				Host: strings.Split(strings.Split(leader, "@")[1], ":")[0],
-				Port: strings.Split(strings.Split(leader, "@")[1], ":")[1],
+				Host: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[0],
+				Port: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[1],
 			},
 		},
 		Attrs: state.Attributes{
@@ -146,50 +128,48 @@ func (c *ConsulBackend) insertMasterRecords(slaves []state.Slave, leader string)
 		},
 		Active: true,
 	}
+
+	slaves := c.State.Slaves
 	slaves = append(slaves, lead)
 	for _, slave := range slaves {
-		if slave.Attrs.Master == "false" {
-			// Slave node
-			continue
+		tags := []string{"slave", c.SlaveIDHostname[slave.ID]}
+
+		if slave.Attrs.Master == "true" {
+			tags = append(tags, "master")
 		}
+		if slave.ID == lead.ID {
+			tags = append(tags, "leader")
+		}
+
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
 			log.Println(err)
 			continue
 		}
 
+		// We'll need this for service registration to the appropriate
+		// slaves
+		c.SlaveIDIP[slave.ID] = slave.PID.Host
+
+		// Pull out only the hostname, not the FQDN
+		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
+
 		if _, ok := c.Agents[slave.PID.Host]; !ok {
 			log.Println("Unknown consul agent", slave.PID.Host)
 			continue
 		}
 
-		if slave.ID == leader {
-			err = c.Agents[slave.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
-				ID:      c.ServicePrefix + ":" + slave.ID,
-				Name:    "leader.mesos",
-				Port:    port,
-				Address: slave.PID.Host,
-			})
+		service := createService(strings.Join([]string{c.ServicePrefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, tags)
+		err = c.Agents[slave.PID.Host].ServiceRegister(service)
 
-		} else {
-			// Add slave to the pool of masters
-			// master.mesos.service.consul
-			err = c.Agents[slave.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
-				ID:      c.ServicePrefix + ":" + slave.ID,
-				Name:    "master.mesos",
-				Port:    port,
-				Address: slave.PID.Host,
-			})
-
-			if err != nil {
-				log.Println(err)
-			}
+		if err != nil {
+			log.Println(err)
 		}
 	}
 }
 
-func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
-	for _, framework := range frameworks {
+func (c *ConsulBackend) insertFrameworkRecords() {
+	for _, framework := range c.State.Frameworks {
 
 		// task, pid, name, hostname
 		port, err := strconv.Atoi(framework.PID.Port)
@@ -205,20 +185,15 @@ func (c *ConsulBackend) insertFrameworkRecords(frameworks []state.Framework) {
 
 		// Add slave to the pool of slaves
 		// slave.mesos.service.consul
-		err = c.Agents[framework.PID.Host].ServiceRegister(&capi.AgentServiceRegistration{
-			ID:      c.ServicePrefix + ":" + framework.Name,
-			Name:    framework.Name,
-			Port:    port,
-			Address: framework.PID.Host,
-		})
-
+		service := createService(strings.Join([]string{c.ServicePrefix, framework.Name}, ":"), framework.Name, framework.PID.Host, port, []string{})
+		err = c.Agents[framework.PID.Host].ServiceRegister(service)
 		if err != nil {
 			log.Println(err)
 		}
 	}
 }
 
-func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) {
+func (c *ConsulBackend) insertTaskRecords(tasks []state.Task) {
 	for _, task := range tasks {
 		if task.State != "TASK_RUNNING" {
 			continue
@@ -231,56 +206,175 @@ func (c *ConsulBackend) insertTaskRecords(framework string, tasks []state.Task) 
 			continue
 		}
 
-		var address string
-		for _, lookup := range c.LookupOrder {
-			lookupkey := strings.Split(lookup, ":")
-			switch lookupkey[0] {
-			case "mesos":
-				address = task.IP("mesos")
-			case "docker":
-				address = task.IP("docker")
-			case "netinfo":
-				address = task.IP("netinfo")
-			case "host":
-				address = task.IP("host")
-			case "label":
-				if len(lookupkey) != 2 {
-					log.Println("Lookup order label is not in proper format `label:labelname`")
-					continue
-				}
-				addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
-				if len(addresses) > 0 {
-					address = addresses[0]
-				}
-			}
+		address := c.getAddress(task)
 
-			if address != "" {
-				break
-			}
-		}
+		healthchecks := c.getHealthChecks(task)
 
-		// If still empty, set to host IP
-		if address == "" {
-			address = c.SlaveIDIP[task.SlaveID]
-		}
+		var services []*capi.AgentServiceRegistration
 
 		// Create a service registration for every port
-		for _, port := range task.Ports() {
-			//log.Println("Registering task:", task.ID, address, port)
-			p, err := strconv.Atoi(port)
-			if err != nil {
-				log.Println("Something stupid happenend and we cant convert", port, "to int")
-				continue
+		if len(task.Ports()) == 0 {
+			// Create a service registration for the base service
+			services = append(services, createService(strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID}, ":"), task.Name, address, 0, []string{c.SlaveIDHostname[task.SlaveID]}))
+		} else {
+			for _, port := range task.Ports() {
+				p, err := strconv.Atoi(port)
+				if err != nil {
+					log.Println("Something stupid happenend and we cant convert", port, "to int")
+					continue
+				}
+				// Create a service registration for each port
+				services = append(services, createService(strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":"), task.Name, address, p, []string{c.SlaveIDHostname[task.SlaveID]}))
 			}
-			err = c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(&capi.AgentServiceRegistration{
-				ID:      strings.Join([]string{c.ServicePrefix, task.ID, port}, ":"),
-				Name:    strings.Join([]string{task.Name, framework}, "."),
-				Port:    p,
-				Address: address,
-			})
+		}
+
+		// Register Healthchecks
+		for _, service := range services {
+			//log.Println("Registering service", service.ID)
+			err := c.Agents[c.SlaveIDIP[task.SlaveID]].ServiceRegister(service)
 			if err != nil {
 				log.Println(err)
+				continue
+			}
+
+			for _, healthcheck := range healthchecks {
+
+				//log.Println("Registering healthcheck", healthcheck.ID, "for service", service.ID)
+				healthcheck.ServiceID = service.ID
+				err = c.Agents[c.SlaveIDIP[task.SlaveID]].CheckRegister(healthcheck)
+				if err != nil {
+					log.Println(err)
+				}
 			}
 		}
 	}
+}
+
+func (c *ConsulBackend) Cleanup() {
+	var wg sync.WaitGroup
+	for _, agent := range c.Agents {
+		// Set up a goroutune to handle each agent
+		wg.Add(1)
+		go func() {
+			services, err := agent.Services()
+			if err != nil {
+				log.Println(err)
+				wg.Done()
+				return
+			}
+
+			for service, serviceinfo := range services {
+				// All services registered by mesos-dns will have the
+				// service prefix be c.ServicePrefix
+				if c.ServicePrefix != strings.Split(service, ":")[0] {
+					continue
+				}
+				for _, tag := range serviceinfo.Tags {
+					timestamp := strings.Split(tag, "%")
+					if "timestamp" != timestamp[0] {
+						continue
+					}
+					servicets, err := time.Parse(time.RFC3339Nano, timestamp[1])
+					if err != nil {
+						log.Println(err)
+						continue
+					}
+					// Allow record to be 2x time.refresh before purging it
+					if time.Now().After(servicets.Add(time.Duration(c.Refresh*2) * time.Second)) {
+						err := agent.ServiceDeregister(service)
+						if err != nil {
+							log.Println(err)
+						}
+					}
+				}
+			}
+			wg.Done()
+		}()
+		wg.Wait()
+	}
+}
+
+func (c *ConsulBackend) getAddress(task state.Task) string {
+
+	var address string
+	for _, lookup := range c.LookupOrder {
+		lookupkey := strings.Split(lookup, ":")
+		switch lookupkey[0] {
+		case "mesos":
+			address = task.IP("mesos")
+		case "docker":
+			address = task.IP("docker")
+		case "netinfo":
+			address = task.IP("netinfo")
+		case "host":
+			address = task.IP("host")
+		case "label":
+			if len(lookupkey) != 2 {
+				log.Println("Lookup order label is not in proper format `label:labelname`")
+				continue
+			}
+			addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
+			if len(addresses) > 0 {
+				address = addresses[0]
+			}
+		}
+
+		if address != "" {
+			break
+		}
+	}
+
+	// If still empty, set to host IP
+	if address == "" {
+		address = c.SlaveIDIP[task.SlaveID]
+	}
+
+	return address
+}
+
+func (c *ConsulBackend) getHealthChecks(task state.Task) []*capi.AgentCheckRegistration {
+
+	// Look up KV for defined healthchecks
+	kv := c.Client.KV()
+	var hc []*capi.AgentCheckRegistration
+	for _, label := range task.Labels {
+		if label.Key != "ConsulHealthCheckKeys" {
+			continue
+		}
+		for _, endpoint := range strings.Split(label.Value, ",") {
+			pair, _, err := kv.Get("healthchecks/"+endpoint, nil)
+			// If key does not exist in consul, pair is nil
+			if pair == nil || err != nil {
+				log.Println("Healthcheck healthchecks/"+endpoint, "not found in consul, skipping")
+				continue
+			}
+			check := &capi.AgentCheckRegistration{}
+			err = json.Unmarshal(pair.Value, check)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			hc = append(hc, check)
+		}
+	}
+	// Maybe keep this in for debug logging
+	//log.Println("Found", len(hc), "healthchecks for", task.Name)
+
+	return hc
+
+}
+
+func createService(id string, name string, address string, port int, tags []string) *capi.AgentServiceRegistration {
+	timestamp := time.Now().Format(time.RFC3339Nano)
+	asr := &capi.AgentServiceRegistration{
+		ID:      id,
+		Name:    name,
+		Address: address,
+		Tags:    append([]string{"timestamp%" + timestamp}, tags...),
+	}
+	if port > 0 {
+		asr.Port = port
+	}
+
+	return asr
 }
