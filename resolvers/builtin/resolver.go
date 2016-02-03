@@ -200,6 +200,13 @@ func (res *Resolver) formatA(dom string, target string) (*dns.A, error) {
 func (res *Resolver) formatSOA(dom string) *dns.SOA {
 	ttl := uint32(res.config.TTL)
 
+    logging.Error.Println("SOAMname:", res.rg.Config.SOAMname)
+    logging.Error.Println("SOARname:", res.rg.Config.SOARname)
+    logging.Error.Println("SOASerial:", res.rg.Config.SOASerial)
+    logging.Error.Println("SOARefresh:", res.rg.Config.SOARefresh)
+    logging.Error.Println("SOARetry:", res.rg.Config.SOARetry)
+    logging.Error.Println("SOAExpire:", res.rg.Config.SOAExpire)
+
 	return &dns.SOA{
 		Hdr: dns.RR_Header{
 			Name:   dom,
@@ -278,28 +285,28 @@ func (res *Resolver) HandleMesos(w dns.ResponseWriter, r *dns.Msg) {
 	m.SetReply(r)
 
 	var errs multiError
-	rs := res.records()
+	rg := res.records()
 	name := strings.ToLower(cleanWild(r.Question[0].Name))
-	switch r.Question[0].Qtype {
+    switch r.Question[0].Qtype {
 	case dns.TypeSRV:
-		errs.Add(res.handleSRV(rs, name, m, r))
+		errs.Add(res.handleSRV(rg, name, m, r))
 	case dns.TypeA:
-		errs.Add(res.handleA(rs, name, m))
+		errs.Add(res.handleA(rg, name, m))
 	case dns.TypeSOA:
 		errs.Add(res.handleSOA(m, r))
 	case dns.TypeNS:
 		errs.Add(res.handleNS(m, r))
 	case dns.TypeANY:
 		errs.Add(
-			res.handleSRV(rs, name, m, r),
-			res.handleA(rs, name, m),
+			res.handleSRV(rg, name, m, r),
+			res.handleA(rg, name, m),
 			res.handleSOA(m, r),
 			res.handleNS(m, r),
 		)
 	}
 
 	if len(m.Answer) == 0 {
-		errs.Add(res.handleEmpty(rs, name, m, r))
+		errs.Add(res.handleEmpty(rg, name, m, r))
 	} else {
 		shuffleAnswers(res.rng, m.Answer)
 		logging.CurLog.MesosSuccess.Inc()

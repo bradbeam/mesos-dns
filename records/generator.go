@@ -348,7 +348,7 @@ func (rg *RecordGenerator) masterRecord(domain string, masters []string, leader 
 	if !addedLeaderMasterN {
 		// only a flake if there were fallback masters configured
 		if len(masters) > 0 {
-			logging.Error.Printf("warning: leader %q is not in master list", leader)
+			logging.Error.Printf("warning: leader %q is not in master list %q", leader, masters)
 		}
 		arec = "master" + strconv.Itoa(idx) + "." + domain + "."
 		rg.insertRR(arec, ip, "A")

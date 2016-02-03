@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+    "time"
 
 	"github.com/kylelemons/godebug/pretty"
 	. "github.com/mesosphere/mesos-dns/dnstest"
@@ -94,6 +95,7 @@ func runHandlers() error {
 	if err != nil {
 		return err
 	}
+
 	res.fwd = func(m *dns.Msg, net string) (*dns.Msg, error) {
 		rr1, err := res.formatA("google.com.", "1.1.1.1")
 		if err != nil {
@@ -266,7 +268,7 @@ func TestHTTP(t *testing.T) {
 				"Version": "0.1.1",
 			},
 		},
-		{"/v1/config", http.StatusOK, &records.Config{}, &res.config},
+		{"/v1/config", http.StatusOK, &Config{}, &res.config},
 		{"/v1/services/_leader._tcp.mesos.", http.StatusOK, []interface{}{},
 			[]interface{}{map[string]interface{}{
 				"service": "_leader._tcp.mesos.",
@@ -305,9 +307,12 @@ func TestHTTP(t *testing.T) {
 }
 
 func fakeDNS() (*Resolver, error) {
-	c := records.NewConfig()
+    var err error
+
+    c := records.NewConfig()
 	c.IPSources = []string{"docker", "mesos", "host"}
-	c.Masters = []string{"144.76.157.37:5050"}
+    // Matches "leader" in fake.json
+	c.Masters = []string{"1.2.3.4:5050"}
 
 	config := NewConfig()
 	config.RecurseOn = false
@@ -326,6 +331,9 @@ func fakeDNS() (*Resolver, error) {
 	if err != nil {
 		return nil, err
 	}
+
+    res.rg = records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
+    res.rg.Config = c
 
 	spec := labels.RFC952
 	err = res.rg.InsertState(sj, "mesos", "mesos-dns.mesos.", c.Masters, c.IPSources, spec)
