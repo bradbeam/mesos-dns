@@ -317,8 +317,11 @@ func fakeDNS() (*Resolver, error) {
 	config := NewConfig()
 	config.RecurseOn = false
 
+    rg := records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
+    rg.Config = c
+
 	testch := make(chan error)
-	res := New(*config, testch, "0.1.1")
+	res := New(*config, testch, rg, "0.1.1")
 	res.rng.Seed(0) // for deterministic tests
 
 	b, err := ioutil.ReadFile("../../factories/fake.json")
@@ -331,9 +334,6 @@ func fakeDNS() (*Resolver, error) {
 	if err != nil {
 		return nil, err
 	}
-
-    res.rg = records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
-    res.rg.Config = c
 
 	spec := labels.RFC952
 	err = res.rg.InsertState(sj, "mesos", "mesos-dns.mesos.", c.Masters, c.IPSources, spec)

@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+    "time"
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/testutil"
@@ -132,9 +133,11 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	errch := make(chan error)
 	version := "1.0"
 
+    rg := records.NewRecordGenerator(time.Duration(300) * time.Second)
+
 	// Hopefully the ENV vars above should allow us
 	// to override the defaults
-	backend := New(*config, errch, version)
+	backend := New(*config, errch, rg, version)
 	_, err := backend.Client.Agent().Self()
 	if err != nil {
 		t.Error("Failed to get consul client initialized")

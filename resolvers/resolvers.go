@@ -17,7 +17,7 @@ type Resolver interface {
 	Reload(rg *records.RecordGenerator)
 }
 
-func New(config records.Config, errch chan error, version string) []Resolver {
+func New(config records.Config, errch chan error, rg *records.RecordGenerator, version string) []Resolver {
 	var resolvers []Resolver
 
 	for _, rType := range config.Resolvers {
@@ -26,15 +26,15 @@ func New(config records.Config, errch chan error, version string) []Resolver {
 		case "consul":
 			conf := consul.NewConfig()
 			Merge(config.ResolversConf["consul"].(map[string]interface{}), &conf)
-			resolvers = append(resolvers, consul.New(*conf, errch, version))
+			resolvers = append(resolvers, consul.New(*conf, errch, rg, version))
 		case "builtin":
 			conf := builtin.NewConfig()
 			Merge(config.ResolversConf["builtin"].(map[string]interface{}), &conf)
-			resolvers = append(resolvers, builtin.New(*conf, errch, version))
+			resolvers = append(resolvers, builtin.New(*conf, errch, rg, version))
 		case "bind":
 			conf := bind.NewConfig()
 			Merge(config.ResolversConf["bind"].(map[string]interface{}), &conf)
-			resolvers = append(resolvers, bind.New(*conf, errch, version))
+			resolvers = append(resolvers, bind.New(*conf, errch, rg, version))
 		}
 	}
 

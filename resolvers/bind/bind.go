@@ -14,7 +14,7 @@ type FileResolver struct {
 	File *os.File
 }
 
-func New(config Config, errch chan<- error, version string) *FileResolver {
+func New(config Config, errch chan<- error, rg *records.RecordGenerator, version string) *FileResolver {
 	// Assume our config has all the necessary stuff in it
 	f, err := ioutil.TempFile("./", "mesos-dns")
 

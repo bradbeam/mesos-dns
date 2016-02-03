@@ -16,6 +16,7 @@ import (
 )
 
 func main() {
+	var rg *records.RecordGenerator
 	var versionFlag bool
 
 	util.PanicHandlers = append(util.PanicHandlers, func(_ interface{}) {
@@ -47,10 +48,14 @@ func main() {
 		}
 	})
 
-	// initialize backends
+    // initialize a RecordGenerator for use by initializing resolvers
+	rg = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
+	rg.Config = config
+
+    // initialize backends
 	changed := detectMasters(config.Zk, config.Masters)
 	masters := append([]string{""}, config.Masters...)
-	resolvers := resolvers.New(config, errch, Version)
+	resolvers := resolvers.New(config, errch, rg, Version)
 
 	defer reload.Stop()
 	defer util.HandleCrash()
@@ -58,8 +63,6 @@ func main() {
 	for {
 		select {
 		case <-reload.C:
-			var rg *records.RecordGenerator
-
 			rg = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
 			err := rg.ParseState(config, masters...)
 

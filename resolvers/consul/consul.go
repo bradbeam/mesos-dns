@@ -21,7 +21,7 @@ type ConsulBackend struct {
 	SlaveIDIP     map[string]string
 }
 
-func New(config capi.Config, errch chan error, version string) *ConsulBackend {
+func New(config capi.Config, errch chan error, rg *records.RecordGenerator, version string) *ConsulBackend {
 	cfg := NewConfig()
 	client, err := capi.NewClient(cfg)
 	if err != nil {

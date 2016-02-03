@@ -33,13 +33,14 @@ type Resolver struct {
 }
 
 // New returns a Resolver with the given version and configuration.
-func New(config Config, errch chan error, version string) *Resolver {
+func New(config Config, errch chan error, rg *records.RecordGenerator, version string) *Resolver {
 	r := &Resolver{
-		version: version,
 		config:  config,
-		// rand.Sources aren't safe for concurrent use, except the global one.
+        rg: rg,
+        // rand.Sources aren't safe for concurrent use, except the global one.
 		// See: https://github.com/golang/go/issues/3611
 		rng: rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
+		version: version,
 	}
 
 	timeout := 5 * time.Second
