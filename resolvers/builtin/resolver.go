@@ -35,11 +35,11 @@ type Resolver struct {
 // New returns a Resolver with the given version and configuration.
 func New(config Config, errch chan error, rg *records.RecordGenerator, version string) *Resolver {
 	r := &Resolver{
-		config:  config,
-        rg: rg,
-        // rand.Sources aren't safe for concurrent use, except the global one.
+		config: config,
+		rg:     rg,
+		// rand.Sources aren't safe for concurrent use, except the global one.
 		// See: https://github.com/golang/go/issues/3611
-		rng: rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
+		rng:     rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
 		version: version,
 	}
 
@@ -201,12 +201,12 @@ func (res *Resolver) formatA(dom string, target string) (*dns.A, error) {
 func (res *Resolver) formatSOA(dom string) *dns.SOA {
 	ttl := uint32(res.config.TTL)
 
-    logging.Error.Println("SOAMname:", res.rg.Config.SOAMname)
-    logging.Error.Println("SOARname:", res.rg.Config.SOARname)
-    logging.Error.Println("SOASerial:", res.rg.Config.SOASerial)
-    logging.Error.Println("SOARefresh:", res.rg.Config.SOARefresh)
-    logging.Error.Println("SOARetry:", res.rg.Config.SOARetry)
-    logging.Error.Println("SOAExpire:", res.rg.Config.SOAExpire)
+	logging.Error.Println("SOAMname:", res.rg.Config.SOAMname)
+	logging.Error.Println("SOARname:", res.rg.Config.SOARname)
+	logging.Error.Println("SOASerial:", res.rg.Config.SOASerial)
+	logging.Error.Println("SOARefresh:", res.rg.Config.SOARefresh)
+	logging.Error.Println("SOARetry:", res.rg.Config.SOARetry)
+	logging.Error.Println("SOAExpire:", res.rg.Config.SOAExpire)
 
 	return &dns.SOA{
 		Hdr: dns.RR_Header{
@@ -288,7 +288,7 @@ func (res *Resolver) HandleMesos(w dns.ResponseWriter, r *dns.Msg) {
 	var errs multiError
 	rg := res.records()
 	name := strings.ToLower(cleanWild(r.Question[0].Name))
-    switch r.Question[0].Qtype {
+	switch r.Question[0].Qtype {
 	case dns.TypeSRV:
 		errs.Add(res.handleSRV(rg, name, m, r))
 	case dns.TypeA:

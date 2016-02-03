@@ -13,7 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
-    "time"
+	"time"
 
 	"github.com/kylelemons/godebug/pretty"
 	. "github.com/mesosphere/mesos-dns/dnstest"
@@ -307,18 +307,18 @@ func TestHTTP(t *testing.T) {
 }
 
 func fakeDNS() (*Resolver, error) {
-    var err error
+	var err error
 
-    c := records.NewConfig()
+	c := records.NewConfig()
 	c.IPSources = []string{"docker", "mesos", "host"}
-    // Matches "leader" in fake.json
+	// Matches "leader" in fake.json
 	c.Masters = []string{"1.2.3.4:5050"}
 
 	config := NewConfig()
 	config.RecurseOn = false
 
-    rg := records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
-    rg.Config = c
+	rg := records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
+	rg.Config = c
 
 	testch := make(chan error)
 	res := New(*config, testch, rg, "0.1.1")

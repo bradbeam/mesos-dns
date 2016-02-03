@@ -5,7 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
-    "time"
+	"time"
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/testutil"
@@ -133,7 +133,7 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	errch := make(chan error)
 	version := "1.0"
 
-    rg := records.NewRecordGenerator(time.Duration(300) * time.Second)
+	rg := records.NewRecordGenerator(time.Duration(300) * time.Second)
 
 	// Hopefully the ENV vars above should allow us
 	// to override the defaults

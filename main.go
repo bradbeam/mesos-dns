@@ -48,11 +48,11 @@ func main() {
 		}
 	})
 
-    // initialize a RecordGenerator for use by initializing resolvers
+	// initialize a RecordGenerator for use by initializing resolvers
 	rg = records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
 	rg.Config = config
 
-    // initialize backends
+	// initialize backends
 	changed := detectMasters(config.Zk, config.Masters)
 	masters := append([]string{""}, config.Masters...)
 	resolvers := resolvers.New(config, errch, rg, Version)
