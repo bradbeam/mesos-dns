@@ -177,7 +177,7 @@ func testRecordGenerator(t *testing.T, spec labels.Func, ipSources []string) Rec
 	masters := []string{"144.76.157.37:5050"}
 
 	var rg RecordGenerator
-	if err := rg.InsertState(sj, "mesos", "mesos-dns.mesos.", "127.0.0.1", masters, ipSources, spec); err != nil {
+	if err := rg.InsertState(sj, "mesos", "mesos-dns.mesos.", masters, ipSources, spec); err != nil {
 		t.Fatal(err)
 	}
 

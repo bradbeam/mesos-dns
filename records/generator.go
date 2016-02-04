@@ -31,7 +31,9 @@ type rrs map[string][]string
 // them. TODO(kozyraki): Refactor when discovery id is available.
 type RecordGenerator struct {
 	As         rrs
+	Config     Config
 	SRVs       rrs
+	State      state.State
 	SlaveIPs   map[string]string
 	httpClient http.Client
 }
@@ -62,7 +64,9 @@ func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
 		hostSpec = labels.RFC952
 	}
 
-	return rg.InsertState(sj, c.Domain, c.SOARname, c.Listener, masters, c.IPSources, hostSpec)
+	rg.Config = c
+
+	return rg.InsertState(sj, c.Domain, c.SOARname, masters, c.IPSources, hostSpec)
 }
 
 // Tries each master and looks for the leader
@@ -110,6 +114,8 @@ func (rg *RecordGenerator) findMaster(masters ...string) (state.State, error) {
 		}
 
 	}
+
+	rg.State = sj
 
 	return sj, errors.New("no master")
 }
@@ -203,14 +209,13 @@ func hostToIP4(hostname string) (string, bool) {
 }
 
 // InsertState transforms a StateJSON into RecordGenerator RRs
-func (rg *RecordGenerator) InsertState(sj state.State, domain, ns, listener string, masters, ipSources []string, spec labels.Func) error {
+func (rg *RecordGenerator) InsertState(sj state.State, domain string, ns string, masters, ipSources []string, spec labels.Func) error {
 
 	rg.SlaveIPs = map[string]string{}
 	rg.SRVs = rrs{}
 	rg.As = rrs{}
 	rg.frameworkRecords(sj, domain, spec)
 	rg.slaveRecords(sj, domain, spec)
-	rg.listenerRecord(listener, ns)
 	rg.masterRecord(domain, masters, sj.Leader)
 	rg.taskRecords(sj, domain, spec, ipSources)
 
@@ -343,7 +348,7 @@ func (rg *RecordGenerator) masterRecord(domain string, masters []string, leader 
 	if !addedLeaderMasterN {
 		// only a flake if there were fallback masters configured
 		if len(masters) > 0 {
-			logging.Error.Printf("warning: leader %q is not in master list", leader)
+			logging.Error.Printf("warning: leader %q is not in master list %q", leader, masters)
 		}
 		arec = "master" + strconv.Itoa(idx) + "." + domain + "."
 		rg.insertRR(arec, ip, "A")
