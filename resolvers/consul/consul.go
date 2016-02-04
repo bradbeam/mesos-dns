@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	consul "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
@@ -456,12 +455,11 @@ func (c *ConsulBackend) getHealthChecks(task state.Task, id string) []*consul.Ag
 }
 
 func createService(id string, name string, address string, port int, tags []string) *consul.AgentServiceRegistration {
-	timestamp := time.Now().Format(time.RFC3339Nano)
 	asr := &consul.AgentServiceRegistration{
 		ID:      id,
 		Name:    name,
 		Address: address,
-		Tags:    append([]string{"timestamp%" + timestamp}, tags...),
+		Tags:    tags,
 	}
 	if port > 0 {
 		asr.Port = port
