@@ -340,7 +340,7 @@ func (c *ConsulBackend) Cleanup() {
 				err := c.Agents[agentid].ServiceDeregister(service.ID)
 				if err != nil {
 					log.Println("Failed to deregister service", service.ID, "on agent", agentid)
-					log.Println("Error:", err)
+					log.Println("Error:", er)
 					continue
 				}
 			}
@@ -350,58 +350,7 @@ func (c *ConsulBackend) Cleanup() {
 	}
 }
 
-//for _, service := range []*ConsulRecords{c.MesosRecords[c.SlaveIPID[agentid]], c.FrameworkRecords[c.SlaveIPID[agentid]], c.TaskRecords[c.SlaveIPID[agentid]]} {
-//for _, service := range services {
 /*
-	service := c.MesosRecords[c.SlaveIPID[agentid]]
-	log.Println("Current", service.Current)
-	log.Println("Previous", service.Previous)
-	c.MesosRecords[c.SlaveIPID[agentid]].Previous = c.MesosRecords[c.SlaveIPID[agentid]].Current
-	service.Current = []*consul.AgentServiceRegistration{}
-	log.Println("Current", service.Current)
-
-//for _, service := range []*ConsulRecords{c.MesosRecords[c.SlaveIPID[agentid]], c.FrameworkRecords[c.SlaveIPID[agentid]], c.TaskRecords[c.SlaveIPID[agentid]]} {
-//for _, service := range services {
-/*
-	service := c.MesosRecords[c.SlaveIPID[agentid]]
-	log.Println("Current", service.Current)
-	log.Println("Previous", service.Previous)
-	c.MesosRecords[c.SlaveIPID[agentid]].Previous = c.MesosRecords[c.SlaveIPID[agentid]].Current
-	service.Current = []*consul.AgentServiceRegistration{}
-	log.Println("Current", service.Current)
-	log.Println("Previous", service.Previous)
-*/
-
-//	c.FrameworkRecords[c.SlaveIPID[agentid]].Previous = c.FrameworkRecords[c.SlaveIPID[agentid]].Current
-//	c.TaskRecords[c.SlaveIPID[agentid]].Previous = c.TaskRecords[c.SlaveIPID[agentid]].Current
-/*
-	prevcheck := false
-	// Check to see if we registered the same service previously
-	prevservices := [][]*consul.AgentServiceRegistration{c.PrevStateMesosRecords[c.SlaveIPID[agentid]], c.PrevStateFrameworkRecords[c.SlaveIPID[agentid]], c.PrevStateTaskRecords[c.SlaveIPID[agentid]]}
-	for _, previousservices := range prevservices {
-		for _, pservice := range previousservices {
-			if compareService(service, pservice) {
-				prevcheck = true
-				break
-			}
-		}
-		if prevcheck {
-			break
-		}
-	}
-	// Register the service
-
-	if !prevcheck {
-		if len(prevservices) > 0 {
-			log.Println("New service found", service.ID)
-		}
-		err := c.Agents[agentid].ServiceRegister(service)
-		if err != nil {
-			log.Println("Failed to register service", err)
-			continue
-		}
-	}
-
 	// Register any healthchecks for the service
 	for _, hc := range c.StateHealthChecks[c.SlaveIPID[agentid]] {
 		if hc.TaskID != service.ID {
@@ -437,75 +386,6 @@ func (c *ConsulBackend) Cleanup() {
 		}
 
 	}
-*/
-//}
-//}
-
-/*
-			wg.Done()
-		}()
-		wg.Wait()
-		// Save off current state records
-		//	c.MesosRecords[c.SlaveIPID[agentid]].Previous = c.MesosRecords[c.SlaveIPID[agentid]].Current
-		//	c.FrameworkRecords[c.SlaveIPID[agentid]].Previous = c.FrameworkRecords[c.SlaveIPID[agentid]].Current
-		//	c.TaskRecords[c.SlaveIPID[agentid]].Previous = c.TaskRecords[c.SlaveIPID[agentid]].Current
-	}
-}
-*/
-
-/*
-	var wg sync.WaitGroup
-	for agentid, agent := range c.Agents {
-		// Set up a goroutune to handle each agent
-		wg.Add(1)
-		go func() {
-			// Pull back services registered with agent
-			services, err := agent.Services()
-			if err != nil {
-				log.Println(err)
-				wg.Done()
-				return
-			}
-
-			// Pull back healthchecks registered with agent
-			checks, err := agent.Checks()
-			if err != nil {
-				log.Println(err)
-				wg.Done()
-				return
-			}
-
-			for service, info := range services {
-				if service == "consul" {
-					continue
-				}
-				found := false
-				for _, stateservices := range [][]*consul.AgentServiceRegistration{c.StateMesosRecords[c.SlaveIPID[agentid]], c.StateFrameworkRecords[c.SlaveIPID[agentid]], c.StateTaskRecords[c.SlaveIPID[agentid]]} {
-					// All services registered by mesos-dns will have the
-					// service prefix be c.ServicePrefix
-					if c.ServicePrefix != strings.Split(service, ":")[0] {
-						continue
-					}
-
-					for _, stateservice := range stateservices {
-						if info.ID == stateservice.ID {
-							found = true
-							break
-						}
-					}
-
-					if found {
-						break
-					}
-				}
-
-				if !found {
-					log.Println("Deregistering service", info.ID)
-					err := agent.ServiceDeregister(info.ID)
-					if err != nil {
-						log.Println("Failed to deregister", info.ID, "from agent", agentid)
-					}
-				}
 
 				// Check healthchecks
 				for checkid, check := range checks {
@@ -537,12 +417,6 @@ func (c *ConsulBackend) Cleanup() {
 						}
 					}
 				}
-			}
-			wg.Done()
-		}()
-		wg.Wait()
-	}
-}
 */
 
 func (c *ConsulBackend) getAddress(task state.Task) string {
