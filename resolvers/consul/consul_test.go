@@ -52,7 +52,7 @@ func TestMesosRecords(t *testing.T) {
 	expected["master@127.0.0.2:5050"] = 1
 
 	// 6 records ( 5x slaves, 1x leader )
-	validateStateRecords(t, backend.StateMesosRecords, 6, expected)
+	validateStateRecords(t, backend.MesosRecords, 6, expected)
 }
 
 func TestFrameworkRecords(t *testing.T) {
@@ -67,7 +67,7 @@ func TestFrameworkRecords(t *testing.T) {
 	expected["20160107-001256-134875658-5050-27524-S2"] = 1
 
 	// 1 record ( marathon )
-	validateStateRecords(t, backend.StateFrameworkRecords, 1, expected)
+	validateStateRecords(t, backend.FrameworkRecords, 1, expected)
 }
 
 func TestTaskRecords(t *testing.T) {
@@ -92,7 +92,7 @@ func TestTaskRecords(t *testing.T) {
 	expected["20160107-001256-134875658-5050-27524-S0"] = 2
 
 	// 5 Records ( 5x slaves )
-	validateStateRecords(t, backend.StateTaskRecords, 5, expected)
+	validateStateRecords(t, backend.TaskRecords, 5, expected)
 }
 
 func TestHealthchecks(t *testing.T) {
@@ -119,7 +119,7 @@ func TestHealthchecks(t *testing.T) {
 	expected["20160107-001256-134875658-5050-27524-S0"] = 2
 
 	// 5 Records ( 5x slaves )
-	validateStateRecords(t, backend.StateTaskRecords, 5, expected)
+	validateStateRecords(t, backend.TaskRecords, 5, expected)
 	expectedhc := make(map[string]int)
 	expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
 	expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
@@ -175,6 +175,7 @@ func TestCleanupRecords(t *testing.T) {
 	if err != nil {
 		t.Error("Failed to create bogus service", err)
 	}
+	backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous = append(backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous, service)
 	err = backend.Agents["127.0.0.1"].CheckRegister(&api.AgentCheckRegistration{
 		ID:                "REMOVEMECHECK",
 		Name:              "REMOVEMECHECK",
@@ -185,6 +186,31 @@ func TestCleanupRecords(t *testing.T) {
 		t.Error("Failed to create bogus healthcheck", err)
 	}
 	backend.Cleanup()
+}
+
+func TestCache(t *testing.T) {
+	server, backend := recordSetup(t)
+	defer server.Stop()
+
+	// Need to do this to populate backend.SlaveIDIP
+	// so we can pull appropriate slave ip mapping
+	// by slave.ID
+	backend.generateMesosRecords()
+	backend.generateFrameworkRecords()
+	setupHealthChecks(t, backend)
+
+	for _, framework := range backend.State.Frameworks {
+		backend.generateTaskRecords(framework.Tasks)
+	}
+	rg := &records.RecordGenerator{State: backend.State}
+	backend.Reload(rg, errors.New(""))
+
+	// 5 records ( 1x slave, 2x myapp, 1x nginx, 1x consul)
+	validateRecords(t, backend, 5)
+	t.Log("Second Refresh")
+	backend.Reload(rg, errors.New(""))
+	validateRecords(t, backend, 5)
+
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
@@ -303,7 +329,7 @@ func validateChecks(t *testing.T, backend *ConsulBackend, expected int) {
 	}
 }
 
-func validateStateRecords(t *testing.T, records map[string][]*api.AgentServiceRegistration, expectedrecs int, expected map[string]int) {
+func validateStateRecords(t *testing.T, records map[string]*ConsulRecords, expectedrecs int, expected map[string]int) {
 	if len(records) != expectedrecs {
 		t.Error("Did not get back", expectedrecs, "records. Got back", len(records))
 		for id := range records {
@@ -314,14 +340,14 @@ func validateStateRecords(t *testing.T, records map[string][]*api.AgentServiceRe
 
 	for id, asr := range records {
 		// Success
-		if len(asr) == expected[id] {
+		if len(asr.Current) == expected[id] {
 			continue
 		}
 
 		// Failure
-		t.Error("Did not get back", expected[id], "state records. Got back", len(asr))
+		t.Error("Did not get back", expected[id], "state records. Got back", len(asr.Current))
 		t.Error(id)
-		for _, info := range asr {
+		for _, info := range asr.Current {
 			t.Error(" -", info.ID, info.Name, info.Address)
 		}
 	}
