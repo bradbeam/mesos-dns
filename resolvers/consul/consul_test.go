@@ -64,7 +64,7 @@ func TestFrameworkRecords(t *testing.T) {
 
 	// Framework is only running on a single slave
 	expected := make(map[string]int)
-	expected["20160107-001256-134875658-5050-27524-S2"] = 1
+	expected["20160107-001256-134875658-5050-27524-S3"] = 1
 
 	// 1 record ( marathon )
 	validateStateRecords(t, backend.FrameworkRecords, 1, expected)
@@ -151,11 +151,8 @@ func TestRegister(t *testing.T) {
 	}
 	backend.Register()
 
-	// 1x slave
-	// 2x myapp
-	// 1x nginx
-	// 1x consul
-	validateRecords(t, backend, 5)
+	// 6 Records ( 2x myapp, 1x nginx, 1x marathon, 1x slave, 1x consul )
+	validateRecords(t, backend, 6)
 }
 
 func TestCleanupRecords(t *testing.T) {
@@ -206,15 +203,45 @@ func TestCache(t *testing.T) {
 	rg := &records.RecordGenerator{State: backend.State}
 	backend.Reload(rg, errors.New(""))
 
-	// 5 records ( 1x slave, 2x myapp, 1x nginx, 1x consul)
-	validateRecords(t, backend, 5)
+	// 6 Records ( 2x myapp, 1x nginx, 1x marathon, 1x slave, 1x consul )
+	validateRecords(t, backend, 6)
 
+	slaveid := backend.SlaveIPID["127.0.0.1"]
+
+	// Create new service
 	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.1", 0, []string{})
-	backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous = append(backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous, service)
-	delta := getDeltaServices(backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Current, backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous)
+	// Save old state
+	backend.TaskRecords[slaveid].Previous = backend.TaskRecords[slaveid].Current
+	// Add a new service to current
+	backend.TaskRecords[slaveid].Current = append(backend.TaskRecords[slaveid].Current, service)
+	// Compare
+	delta := getDeltaServices(backend.TaskRecords[slaveid].Previous, backend.TaskRecords[slaveid].Current)
 	if len(delta) != 1 {
-		t.Error("")
+		t.Error("Did not get back additional service registration. Expected 1 received", len(delta))
 	}
+
+	// Create new healthcheck
+	hc := &api.AgentCheckRegistration{
+		ID:                "REMOVEMECHECK",
+		Name:              "REMOVEMECHECK",
+		ServiceID:         "mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230",
+		AgentServiceCheck: api.AgentServiceCheck{TTL: "500s"},
+	}
+	// Save off old state
+	backend.HealthChecks[slaveid].Previous = backend.HealthChecks[slaveid].Current
+	// Add in new healthcheck to current
+	for _, hctask := range backend.HealthChecks[slaveid].Current {
+		if hctask.TaskID == hc.ServiceID {
+			hctask.Regs = append(hctask.Regs, hc)
+			break
+		}
+	}
+	// Compare
+	deltachecks := getDeltaChecks(backend.HealthChecks[slaveid].Previous, backend.HealthChecks[slaveid].Current, hc.ServiceID)
+	if len(deltachecks) != 1 {
+		t.Error("Did not get back additional healthcheck registration. Expected 1 received", len(deltachecks))
+	}
+
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {

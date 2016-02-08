@@ -32,11 +32,6 @@ type ConsulBackend struct {
 	HealthChecks     map[string]*ConsulChecks
 }
 
-type AgentCheckRegistrationSlave struct {
-	TaskID string
-	Regs   []*consul.AgentCheckRegistration
-}
-
 type ConsulRecords struct {
 	Current  []*consul.AgentServiceRegistration
 	Previous []*consul.AgentServiceRegistration
@@ -45,6 +40,11 @@ type ConsulRecords struct {
 type ConsulChecks struct {
 	Current  []*AgentCheckRegistrationSlave
 	Previous []*AgentCheckRegistrationSlave
+}
+
+type AgentCheckRegistrationSlave struct {
+	TaskID string
+	Regs   []*consul.AgentCheckRegistration
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
@@ -205,9 +205,15 @@ func (c *ConsulBackend) generateFrameworkRecords() {
 
 		// Silly
 		var slaveid string
-		for id, hostname := range c.SlaveIDHostname {
-			if hostname == strings.Split(framework.Hostname, ".")[0] {
-				slaveid = id
+		if _, ok := c.SlaveIPID[framework.PID.Host]; ok {
+			slaveid = c.SlaveIPID[framework.PID.Host]
+		} else {
+			// Try to discover the slave that the framework is running on
+			// by comparing the hostnames
+			for id, hostname := range c.SlaveIDHostname {
+				if hostname == strings.Split(framework.Hostname, ".")[0] {
+					slaveid = id
+				}
 			}
 		}
 
