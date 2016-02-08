@@ -133,7 +133,7 @@ func TestHealthchecks(t *testing.T) {
 	expectedhc["mesos-dns:mesosmaster-r03-s03:nginx.2a8898a8-b9a7-11e5-b2bb-0242d4d0a230:31381"] = 0
 	expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
 	expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-	validateHealthRecords(t, backend.StateHealthChecks, expectedhc)
+	validateHealthRecords(t, backend.HealthChecks, expectedhc)
 }
 
 func TestRegister(t *testing.T) {
@@ -202,15 +202,19 @@ func TestCache(t *testing.T) {
 	for _, framework := range backend.State.Frameworks {
 		backend.generateTaskRecords(framework.Tasks)
 	}
+
 	rg := &records.RecordGenerator{State: backend.State}
 	backend.Reload(rg, errors.New(""))
 
 	// 5 records ( 1x slave, 2x myapp, 1x nginx, 1x consul)
 	validateRecords(t, backend, 5)
-	t.Log("Second Refresh")
-	backend.Reload(rg, errors.New(""))
-	validateRecords(t, backend, 5)
 
+	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.1", 0, []string{})
+	backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous = append(backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous, service)
+	delta := getDeltaServices(backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Current, backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous)
+	if len(delta) != 1 {
+		t.Error("")
+	}
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
@@ -353,14 +357,14 @@ func validateStateRecords(t *testing.T, records map[string]*ConsulRecords, expec
 	}
 }
 
-func validateHealthRecords(t *testing.T, records map[string][]*AgentCheckRegistrationSlave, expected map[string]int) {
+func validateHealthRecords(t *testing.T, records map[string]*ConsulChecks, expected map[string]int) {
 	for id, acr := range records {
-		for _, info := range acr {
+		for _, info := range acr.Current {
 			if len(info.Regs) == expected[info.TaskID] {
 				continue
 			}
 
-			t.Error("Did not get back", expected[id], "healthcheck records. Got back", len(acr))
+			t.Error("Did not get back", expected[id], "healthcheck records. Got back", len(acr.Current))
 			t.Error(" -", info.TaskID)
 		}
 	}
