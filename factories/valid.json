@@ -8,13 +8,13 @@
     "Resolvers": {
         "builtin": {
             "DNSOn":       true,
+            "ExternalDNS": ["8.8.8.8", "8.8.4.4"],
             "ExternalOn":  true,
             "HTTPOn":      true,
             "HTTPPort":    8080,
             "Listener":    "127.0.0.1",
             "Port":        15353,
             "RecurseOn":   true,
-            "ExternalDNS": ["8.8.8.8", "8.8.4.4"],
             "Timeout":     5,
             "TTL":         5
         },
@@ -30,7 +30,7 @@
     "SOAMname":            "dnsmenow.com",
     "SOARefresh":          5,
     "SOARetry":            5,
-    "SOARname":            "Somebody@InIT.com",
+    "SOARname":            "somebody@tech.me",
     "SOASerial":           5,
     "Zk":                  "animalshatecages.com",
     "ZkDetectionTimeout":  5
