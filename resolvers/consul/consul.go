@@ -365,14 +365,17 @@ func (c *ConsulBackend) Cleanup() {
 			}
 			checks := []*consul.AgentCheckRegistration{}
 			if _, ok := c.HealthChecks[slaveid]; ok {
-				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Previous, c.HealthChecks[slaveid].Current)...)
+				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Current, c.HealthChecks[slaveid].Previous)...)
 				c.HealthChecks[slaveid].Previous = c.HealthChecks[slaveid].Current
 				c.HealthChecks[slaveid].Current = nil
 			}
 
 			for _, hc := range checks {
-				log.Println(hc.ServiceID)
-				log.Println("Removing", hc)
+				log.Println("Removing", hc.ID)
+				err := c.Agents[agentid].CheckDeregister(hc.ID)
+				if err != nil {
+					log.Println("Failed to deregister check", hc.ID)
+				}
 			}
 			wg.Done()
 		}()
