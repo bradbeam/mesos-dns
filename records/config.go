@@ -27,9 +27,7 @@ type Config struct {
 	// Refresh frequency: the frequency in seconds of regenerating records (default 60)
 	RefreshSeconds int
 	// Which backend resolvers to load (builtin by default)
-	Resolvers []string
-	// A map of the configurations for the Resolvers
-	ResolversConf map[string]interface{}
+	Resolvers map[string]interface{}
 	// Timeout in seconds waiting for the master to return data from StateJson
 	StateTimeoutSeconds int
 	// SOA record fields (see http://tools.ietf.org/html/rfc1035#page-18)
@@ -53,7 +51,7 @@ func NewConfig() Config {
 		Domain:              "mesos",
 		IPSources:           []string{"netinfo", "mesos", "host"},
 		RefreshSeconds:      60,
-		Resolvers:           []string{"builtin"},
+		Resolvers:           map[string]interface{}{"builtin": nil},
 		StateTimeoutSeconds: 300,
 		SOAExpire:           86400,
 		SOAMinttl:           60,
@@ -66,8 +64,8 @@ func NewConfig() Config {
 }
 
 // SetConfig instantiates a Config struct read in from config.json
-func SetConfig(cjson string) Config {
-	c, err := readConfig(cjson)
+func SetConfig(cjson string) *Config {
+	c, err := ReadConfig(cjson)
 	if err != nil {
 		logging.Error.Fatal(err)
 	}
@@ -89,7 +87,7 @@ func SetConfig(cjson string) Config {
 	c.SOAMname = strings.TrimRight(c.SOAMname, ".") + "."
 	c.SOASerial = uint32(time.Now().Unix())
 
-	// print configuration file
+	// print the configuration file
 	logging.Verbose.Println("Mesos-DNS configuration:")
 	logging.Verbose.Println("   - ConfigFile: ", c.File)
 	logging.Verbose.Println("   - Domain: " + c.Domain)
@@ -97,7 +95,6 @@ func SetConfig(cjson string) Config {
 	logging.Verbose.Println("   - IPSources: ", c.IPSources)
 	logging.Verbose.Println("   - Masters: " + strings.Join(c.Masters, ", "))
 	logging.Verbose.Println("   - RefreshSeconds: ", c.RefreshSeconds)
-	logging.Verbose.Println("   - Resolvers: " + strings.Join(c.Resolvers, ", "))
 	logging.Verbose.Println("   - SOAMname: " + c.SOAMname)
 	logging.Verbose.Println("   - SOARname: " + c.SOARname)
 	logging.Verbose.Println("   - SOASerial: ", c.SOASerial)
@@ -109,18 +106,18 @@ func SetConfig(cjson string) Config {
 	logging.Verbose.Println("   - ZookeeperDetectionTimeout: ", c.ZkDetectionTimeout)
 
 	// print individual configurations for resolvers
-	logging.Verbose.Println("   - ResolversConf:")
-	for k, v := range c.ResolversConf {
+	logging.Verbose.Println("   - Resolvers:")
+	for k, v := range c.Resolvers {
 		logging.Verbose.Printf("     - %s:\n", k)
 		for key, val := range v.(map[string]interface{}) {
 			logging.Verbose.Printf("       - %s:\n%+v\n", key, val)
 		}
 	}
 
-	return *c
+	return c
 }
 
-func readConfig(file string) (*Config, error) {
+func ReadConfig(file string) (*Config, error) {
 	var err error
 
 	workingDir := "."

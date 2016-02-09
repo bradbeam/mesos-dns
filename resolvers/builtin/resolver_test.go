@@ -318,7 +318,7 @@ func fakeDNS() (*Resolver, error) {
 	config.RecurseOn = false
 
 	rg := records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
-	rg.Config = c
+	rg.Config = &c
 
 	testch := make(chan error)
 	res := New(*config, testch, rg, "0.1.1")

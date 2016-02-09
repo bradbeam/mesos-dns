@@ -17,7 +17,7 @@ func TestNonLocalAddies(t *testing.T) {
 
 func TestNewConfigValidate(t *testing.T) {
 	c := NewConfig()
-	if err := validateRemoteDNS(c.RemoteDNS); err != nil {
+	if err := validateExternalDNS(c.ExternalDNS); err != nil {
 		t.Error(err)
 	}
 }
