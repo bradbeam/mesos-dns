@@ -358,9 +358,17 @@ func (c *ConsulBackend) Cleanup() {
 			for _, service := range services {
 				err := c.Agents[agentid].ServiceDeregister(service.ID)
 				if err != nil {
-					log.Println("Failed to deregister service", service.ID, "on agent", agentid)
+					log.Println("Failed to deregister service", service.ID, "on agent", agentid, ". Falling back to catalog deregistration.")
 					log.Println("Error:", err)
-					continue
+					dereg := &consul.CatalogDeregistration{
+						Node:      c.SlaveIDHostname[slaveid],
+						ServiceID: service.ID,
+					}
+					_, err = c.Client.Catalog().Deregister(dereg, nil)
+					if err != nil {
+						log.Println("Failed to deregister service from catalog", err)
+						continue
+					}
 				}
 			}
 			checks := []*consul.AgentCheckRegistration{}
@@ -374,7 +382,16 @@ func (c *ConsulBackend) Cleanup() {
 				log.Println("Removing", hc.ID)
 				err := c.Agents[agentid].CheckDeregister(hc.ID)
 				if err != nil {
-					log.Println("Failed to deregister check", hc.ID)
+					log.Println("Failed to deregister check", hc.ID, "on agent", agentid, " . Falling back to catalog deregistration.")
+					dereg := &consul.CatalogDeregistration{
+						Node:    c.SlaveIDHostname[slaveid],
+						CheckID: hc.ID,
+					}
+					_, err = c.Client.Catalog().Deregister(dereg, nil)
+					if err != nil {
+						log.Println("Failed to deregister service from catalog", err)
+						continue
+					}
 				}
 			}
 			wg.Done()
