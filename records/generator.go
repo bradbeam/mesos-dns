@@ -31,7 +31,7 @@ type rrs map[string][]string
 // them. TODO(kozyraki): Refactor when discovery id is available.
 type RecordGenerator struct {
 	As         rrs
-	Config     Config
+	Config     *Config
 	SRVs       rrs
 	State      state.State
 	SlaveIPs   map[string]string
@@ -46,9 +46,9 @@ func NewRecordGenerator(httpTimeout time.Duration) *RecordGenerator {
 
 // ParseState retrieves and parses the Mesos master /state.json and converts it
 // into DNS records.
-func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
+func (rg *RecordGenerator) ParseState(c *Config) error {
 	// find master -- return if error
-	sj, err := rg.findMaster(masters...)
+	sj, err := rg.findMaster(c.Masters)
 	if err != nil {
 		logging.Error.Println("no master")
 		return err
@@ -64,14 +64,12 @@ func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
 		hostSpec = labels.RFC952
 	}
 
-	rg.Config = c
-
-	return rg.InsertState(sj, c.Domain, c.SOARname, masters, c.IPSources, hostSpec)
+	return rg.InsertState(sj, c.Domain, c.SOARname, c.Masters, c.IPSources, hostSpec)
 }
 
 // Tries each master and looks for the leader
 // if no leader responds it errors
-func (rg *RecordGenerator) findMaster(masters ...string) (state.State, error) {
+func (rg *RecordGenerator) findMaster(masters []string) (state.State, error) {
 	var sj state.State
 	var leader string
 

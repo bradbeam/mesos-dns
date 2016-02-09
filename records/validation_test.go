@@ -41,6 +41,6 @@ func validate(t *testing.T, i int, tc validationTest, f func([]string) error) {
 	case tc.valid:
 		t.Fatalf("test %d failed, unexpected error validating remote DNS server %v: %v", i, tc.in, err)
 	default:
-		t.Fatalf("test %d failed, expected validation error for RemoteDNS(%d) %v", i, len(tc.in), tc.in)
+		t.Fatalf("test %d failed, expected validation error for ExternalDNS(%d) %v", i, len(tc.in), tc.in)
 	}
 }

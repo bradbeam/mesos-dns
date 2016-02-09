@@ -23,8 +23,8 @@ type Config struct {
 	Port int
 	// Value of RecursionAvailable for responses in Mesos domain
 	RecurseOn bool
-	// Remote DNS servers: IP address of the DNS server for forwarded accesses
-	RemoteDNS []string
+	// External DNS servers: IP address(es) of DNS server(s) for unauthoritative queries
+	ExternalDNS []string
 	// Timeout is the default connect/read/write timeout for outbound
 	// queries
 	Timeout int
@@ -35,16 +35,16 @@ type Config struct {
 // NewConfig return the default config of the resolver
 func NewConfig() *Config {
 	return &Config{
-		DNSOn:      true,
-		ExternalOn: true,
-		HTTPOn:     true,
-		HTTPPort:   8123,
-		Listener:   "0.0.0.0",
-		Port:       53,
-		RecurseOn:  true,
-		RemoteDNS:  []string{"8.8.8.8"},
-		Timeout:    5,
-		TTL:        60,
+		DNSOn:       true,
+		ExternalOn:  true,
+		HTTPOn:      true,
+		HTTPPort:    8123,
+		Listener:    "0.0.0.0",
+		Port:        53,
+		RecurseOn:   true,
+		ExternalDNS: []string{"8.8.8.8"},
+		Timeout:     5,
+		TTL:         60,
 	}
 }
 
@@ -53,11 +53,11 @@ func (c *Config) SetConfig(conf map[string]interface{}) {
 
 	// Builtin resolver validation
 	if c.ExternalOn {
-		if len(c.RemoteDNS) == 0 {
-			c.RemoteDNS = GetLocalDNS()
+		if len(c.ExternalDNS) == 0 {
+			c.ExternalDNS = GetLocalDNS()
 		}
-		if err = validateRemoteDNS(c.RemoteDNS); err != nil {
-			logging.Error.Fatalf("Remote servers validation failed: %v", err)
+		if err = validateExternalDNS(c.ExternalDNS); err != nil {
+			logging.Error.Fatalf("External DNS servers validation failed: %v", err)
 		}
 	}
 

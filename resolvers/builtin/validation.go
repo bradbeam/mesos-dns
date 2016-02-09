@@ -12,10 +12,10 @@ func validateEnabledServices(c *Config) error {
 	return nil
 }
 
-// validateRemoteDNS checks that each remote server's IP in the list is a properly
+// validateExternalDNS checks that each remote server's IP in the list is a properly
 // formatted IP address. Duplicate IPs in the list are not allowed.
 // returns nil if the remote server list is empty, or else all IPs in the list are valid.
-func validateRemoteDNS(rs []string) error {
+func validateExternalDNS(rs []string) error {
 	if len(rs) == 0 {
 		return nil
 	}

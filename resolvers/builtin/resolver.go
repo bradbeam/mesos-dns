@@ -18,7 +18,7 @@ import (
 	"github.com/mesosphere/mesos-dns/exchanger"
 	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
-	"github.com/mesosphere/mesos-dns/util"
+	"github.com/mesosphere/mesos-dns/utils"
 	"github.com/miekg/dns"
 )
 
@@ -48,7 +48,7 @@ func New(config Config, errch chan error, rg *records.RecordGenerator, version s
 		timeout = time.Duration(config.Timeout) * time.Second
 	}
 
-	rs := config.RemoteDNS
+	rs := config.ExternalDNS
 	if !config.ExternalOn {
 		rs = rs[:0]
 	}
@@ -117,7 +117,7 @@ func (res *Resolver) LaunchDNS() <-chan error {
 // the returned signal chan is closed upon the server successfully entering the listening phase.
 // if the server aborts then an error is sent on the error chan.
 func (res *Resolver) Serve(proto string) (<-chan struct{}, <-chan error) {
-	defer util.HandleCrash()
+	defer utils.HandleCrash()
 
 	ch := make(chan struct{})
 	server := &dns.Server{
@@ -200,13 +200,6 @@ func (res *Resolver) formatA(dom string, target string) (*dns.A, error) {
 // formatSOA returns the SOA resource record for the mesos domain
 func (res *Resolver) formatSOA(dom string) *dns.SOA {
 	ttl := uint32(res.config.TTL)
-
-	logging.Error.Println("SOAMname:", res.rg.Config.SOAMname)
-	logging.Error.Println("SOARname:", res.rg.Config.SOARname)
-	logging.Error.Println("SOASerial:", res.rg.Config.SOASerial)
-	logging.Error.Println("SOARefresh:", res.rg.Config.SOARefresh)
-	logging.Error.Println("SOARetry:", res.rg.Config.SOARetry)
-	logging.Error.Println("SOAExpire:", res.rg.Config.SOAExpire)
 
 	return &dns.SOA{
 		Hdr: dns.RR_Header{
@@ -473,7 +466,7 @@ func (res *Resolver) configureHTTP() {
 // LaunchHTTP starts an HTTP server for the Resolver, returning a error channel
 // to which errors are asynchronously sent.
 func (res *Resolver) LaunchHTTP() <-chan error {
-	defer util.HandleCrash()
+	defer utils.HandleCrash()
 
 	res.configureHTTP()
 	portString := ":" + strconv.Itoa(res.config.HTTPPort)
