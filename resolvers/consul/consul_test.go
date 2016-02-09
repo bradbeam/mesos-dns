@@ -13,6 +13,8 @@ import (
 	"github.com/mesosphere/mesos-dns/records/state"
 )
 
+const LOCALSLAVEID = "20160107-001256-134875658-5050-27524-S3"
+
 func TestNew(t *testing.T) {
 	server, _ := backendSetup(t)
 	defer server.Stop()
@@ -45,7 +47,7 @@ func TestMesosRecords(t *testing.T) {
 	// Each slave is a single id
 	expected := make(map[string]int)
 	expected["20160107-001256-134875658-5050-27524-S66"] = 1
-	expected["20160107-001256-134875658-5050-27524-S3"] = 1
+	expected[LOCALSLAVEID] = 1
 	expected["20160107-001256-134875658-5050-27524-S1"] = 1
 	expected["20160107-001256-134875658-5050-27524-S2"] = 1
 	expected["20160107-001256-134875658-5050-27524-S0"] = 1
@@ -64,7 +66,7 @@ func TestFrameworkRecords(t *testing.T) {
 
 	// Framework is only running on a single slave
 	expected := make(map[string]int)
-	expected["20160107-001256-134875658-5050-27524-S3"] = 1
+	expected[LOCALSLAVEID] = 1
 
 	// 1 record ( marathon )
 	validateStateRecords(t, backend.FrameworkRecords, 1, expected)
@@ -86,7 +88,7 @@ func TestTaskRecords(t *testing.T) {
 	// Each slave can have a different number of tasks running
 	expected := make(map[string]int)
 	expected["20160107-001256-134875658-5050-27524-S66"] = 2
-	expected["20160107-001256-134875658-5050-27524-S3"] = 3
+	expected[LOCALSLAVEID] = 3
 	expected["20160107-001256-134875658-5050-27524-S1"] = 3
 	expected["20160107-001256-134875658-5050-27524-S2"] = 2
 	expected["20160107-001256-134875658-5050-27524-S0"] = 2
@@ -113,27 +115,15 @@ func TestHealthchecks(t *testing.T) {
 	// Each slave can have a different number of tasks running
 	expected := make(map[string]int)
 	expected["20160107-001256-134875658-5050-27524-S66"] = 2
-	expected["20160107-001256-134875658-5050-27524-S3"] = 3
+	expected[LOCALSLAVEID] = 3
 	expected["20160107-001256-134875658-5050-27524-S1"] = 3
 	expected["20160107-001256-134875658-5050-27524-S2"] = 2
 	expected["20160107-001256-134875658-5050-27524-S0"] = 2
 
 	// 5 Records ( 5x slaves )
 	validateStateRecords(t, backend.TaskRecords, 5, expected)
-	expectedhc := make(map[string]int)
-	expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-	expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-	expectedhc["mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-	expectedhc["mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-	expectedhc["mesos-dns:mesosslave-r01-s01:nginx-no-net.215c789f-c611-11e5-aca8-0242965d2034:31477"] = 0
-	expectedhc["mesos-dns:mesosslave-r01-s01:nginx-host-net.7a43b7d6-c611-11e5-aca8-0242965d2034:31423"] = 0
-	expectedhc["mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230"] = 2
-	expectedhc["mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-	expectedhc["mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-	expectedhc["mesos-dns:mesosmaster-r03-s03:nginx.2a8898a8-b9a7-11e5-b2bb-0242d4d0a230:31381"] = 0
-	expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-	expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-	validateHealthRecords(t, backend.HealthChecks, expectedhc)
+	// 2 healthchecks
+	validateHealthRecords(t, backend.HealthChecks, 2)
 }
 
 func TestRegister(t *testing.T) {
@@ -152,7 +142,7 @@ func TestRegister(t *testing.T) {
 		// to add healthchecks to our local(127.0.0.1) task
 		for _, task := range framework.Tasks {
 			if task.ID == "nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230" {
-				t.Log("Adding nginx/port healthcheck for", task.ID)
+				//t.Log("Adding nginx/port healthcheck for", task.ID)
 				label := state.Label{
 					Key:   "ConsulHealthCheckKeys",
 					Value: "nginx/port,nginx/http",
@@ -174,29 +164,55 @@ func TestCleanupRecords(t *testing.T) {
 	defer server.Stop()
 
 	setupHealthChecks(t, backend)
-	// Need to do this to populate backend.SlaveIDIP
-	// so we can pull appropriate slave ip mapping
-	// by slave.ID
 
 	rg := &records.RecordGenerator{State: backend.State}
 	backend.Reload(rg, errors.New(""))
+	validateRecords(t, backend, 6)
 
-	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.1", 0, []string{})
+	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.2", 0, []string{})
 	err := backend.Agents["127.0.0.1"].ServiceRegister(service)
 	if err != nil {
 		t.Error("Failed to create bogus service", err)
 	}
-	backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous = append(backend.TaskRecords[backend.SlaveIPID["127.0.0.1"]].Previous, service)
-	err = backend.Agents["127.0.0.1"].CheckRegister(&api.AgentCheckRegistration{
+	validateRecords(t, backend, 7)
+
+	slaveid := backend.SlaveIPID["127.0.0.1"]
+	// Add this to previous so when we parse state again,
+	// this will not be present
+	backend.TaskRecords[slaveid].Previous = append(backend.TaskRecords[slaveid].Previous, service)
+
+	backend.Reload(rg, errors.New(""))
+	validateRecords(t, backend, 6)
+
+	hc := &api.AgentCheckRegistration{
 		ID:                "REMOVEMECHECK",
 		Name:              "REMOVEMECHECK",
 		ServiceID:         "mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230",
 		AgentServiceCheck: api.AgentServiceCheck{TTL: "500s"},
-	})
+	}
+	err = backend.Agents["127.0.0.1"].CheckRegister(hc)
 	if err != nil {
 		t.Error("Failed to create bogus healthcheck", err)
 	}
-	backend.Cleanup()
+
+	backend.HealthChecks[slaveid].Previous = append(backend.HealthChecks[slaveid].Previous, hc)
+	backend.Reload(rg, errors.New(""))
+	/*
+		expectedhc := make(map[string]int)
+		expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
+		expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
+		expectedhc["mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
+		expectedhc["mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
+		expectedhc["mesos-dns:mesosslave-r01-s01:nginx-no-net.215c789f-c611-11e5-aca8-0242965d2034:31477"] = 0
+		expectedhc["mesos-dns:mesosslave-r01-s01:nginx-host-net.7a43b7d6-c611-11e5-aca8-0242965d2034:31423"] = 0
+		expectedhc["mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230"] = 2
+		expectedhc["mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
+		expectedhc["mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
+		expectedhc["mesos-dns:mesosmaster-r03-s03:nginx.2a8898a8-b9a7-11e5-b2bb-0242d4d0a230:31381"] = 0
+		expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
+		expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
+		validateHealthRecords(t, backend.HealthChecks, expectedhc)
+	*/
 }
 
 func TestCache(t *testing.T) {
@@ -206,13 +222,7 @@ func TestCache(t *testing.T) {
 	// Need to do this to populate backend.SlaveIDIP
 	// so we can pull appropriate slave ip mapping
 	// by slave.ID
-	backend.generateMesosRecords()
-	backend.generateFrameworkRecords()
 	setupHealthChecks(t, backend)
-
-	for _, framework := range backend.State.Frameworks {
-		backend.generateTaskRecords(framework.Tasks)
-	}
 
 	rg := &records.RecordGenerator{State: backend.State}
 	backend.Reload(rg, errors.New(""))
@@ -220,6 +230,7 @@ func TestCache(t *testing.T) {
 	// 6 Records ( 2x myapp, 1x nginx, 1x marathon, 1x slave, 1x consul )
 	validateRecords(t, backend, 6)
 
+	// Save us uglyness later
 	slaveid := backend.SlaveIPID["127.0.0.1"]
 
 	// Create new service
@@ -231,40 +242,23 @@ func TestCache(t *testing.T) {
 	if len(delta) != 1 {
 		t.Error("Did not get back additional service registration. Expected 1 received", len(delta))
 	}
-	t.Log("Previous")
-	for _, hcs := range backend.HealthChecks[slaveid].Previous {
-		t.Log(hcs.TaskID)
-		for _, hcreg := range hcs.Regs {
-			t.Log(hcreg)
-		}
+
+	// Create new healthcheck
+	hc := &api.AgentCheckRegistration{
+		ID:                "REMOVEMECHECK2",
+		Name:              "REMOVEMECHECK2",
+		ServiceID:         "mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230",
+		AgentServiceCheck: api.AgentServiceCheck{TTL: "500s"},
 	}
 
-	t.Log(backend.HealthChecks[slaveid].Previous)
-	t.Log(backend.HealthChecks[slaveid].Current)
-	/*
-		// Create new healthcheck
-		hc := &api.AgentCheckRegistration{
-			ID:                "REMOVEMECHECK2",
-			Name:              "REMOVEMECHECK2",
-			ServiceID:         "mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230",
-			AgentServiceCheck: api.AgentServiceCheck{TTL: "500s"},
-		}
-		// Add in new healthcheck to current
-		for _, hctask := range backend.HealthChecks[slaveid].Current {
-			if hctask.TaskID == hc.ServiceID {
-				hctask.Regs = append(hctask.Regs, hc)
-				break
-			}
-		}
-		t.Log(backend.HealthChecks[slaveid].Previous)
-		t.Log(backend.HealthChecks[slaveid].Current)
-		// Compare
-		/*
-			deltachecks := getDeltaChecks(backend.HealthChecks[slaveid].Previous, backend.HealthChecks[slaveid].Current, hc.ServiceID)
-			if len(deltachecks) != 1 {
-				t.Error("Did not get back additional healthcheck registration. Expected 1 received", len(deltachecks))
-			}
-	*/
+	// Add in new healthcheck to current
+	backend.HealthChecks[slaveid].Current = append(backend.HealthChecks[slaveid].Current, hc)
+
+	// Compare
+	deltachecks := getDeltaChecks(backend.HealthChecks[slaveid].Previous, backend.HealthChecks[slaveid].Current)
+	if len(deltachecks) != 1 {
+		t.Error("Did not get back additional healthcheck registration. Expected 1 received", len(deltachecks))
+	}
 
 }
 
@@ -327,26 +321,23 @@ func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 		t.Error("Issue connecting to agents.", err)
 	}
 
-	rg := &records.RecordGenerator{State: sj}
-
 	// :D
 	// Do this for testing so we can have
 	// a consul agent ( our dummy test server )
 	// running on the same host as the mesos process
-	for _, slave := range rg.State.Slaves {
-		if slave.ID == "20160107-001256-134875658-5050-27524-S3" {
+	for _, slave := range sj.Slaves {
+		if slave.ID == LOCALSLAVEID {
 			slave.PID.Host = "127.0.0.1"
 		}
 	}
-	rg.State.Leader = "master@127.0.0.2:5050"
-	rg.State.Frameworks[0].PID.Host = "127.0.0.1"
-	backend.State = rg.State
+	sj.Leader = "master@127.0.0.2:5050"
+	sj.Frameworks[0].PID.Host = "127.0.0.1"
+	backend.State = sj
 
 	return server, backend
 }
 
 func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
-	// Should make a little more programmatic test
 	for _, agent := range backend.Agents {
 		services, err := agent.Services()
 		if err != nil {
@@ -408,15 +399,11 @@ func validateStateRecords(t *testing.T, records map[string]*ConsulRecords, expec
 	}
 }
 
-func validateHealthRecords(t *testing.T, records map[string]*ConsulChecks, expected map[string]int) {
-	for id, acr := range records {
-		for _, info := range acr.Current {
-			if len(info.Regs) == expected[info.TaskID] {
-				continue
-			}
-
-			t.Error("Did not get back", expected[id], "healthcheck records. Got back", len(acr.Current))
-			t.Error(" -", info.TaskID)
+func validateHealthRecords(t *testing.T, records map[string]*ConsulChecks, expected int) {
+	if len(records[LOCALSLAVEID].Current) != expected {
+		t.Error("Did not get back", expected, "healthcheck records. Got back", len(records[LOCALSLAVEID].Current))
+		for _, hc := range records[LOCALSLAVEID].Current {
+			t.Error(" -", hc.ServiceID)
 		}
 	}
 }

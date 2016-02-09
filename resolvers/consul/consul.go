@@ -38,13 +38,13 @@ type ConsulRecords struct {
 }
 
 type ConsulChecks struct {
-	Current  []*AgentCheckRegistrationSlave
-	Previous []*AgentCheckRegistrationSlave
+	Current  []*consul.AgentCheckRegistration
+	Previous []*consul.AgentCheckRegistration
 }
 
-type AgentCheckRegistrationSlave struct {
+type TaskCheck struct {
 	TaskID string
-	Regs   []*consul.AgentCheckRegistration
+	*consul.AgentCheckRegistration
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
@@ -160,6 +160,14 @@ func (c *ConsulBackend) generateMesosRecords() {
 	slaves := c.State.Slaves
 	slaves = append(slaves, lead)
 	for _, slave := range slaves {
+		// We'll need this for service registration to the appropriate
+		// slaves
+		c.SlaveIDIP[slave.ID] = slave.PID.Host
+		c.SlaveIPID[slave.PID.Host] = slave.ID
+
+		// Pull out only the hostname, not the FQDN
+		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
+
 		tags := []string{"slave", c.SlaveIDHostname[slave.ID]}
 
 		if slave.Attrs.Master == "true" {
@@ -174,14 +182,6 @@ func (c *ConsulBackend) generateMesosRecords() {
 			log.Println(err)
 			continue
 		}
-
-		// We'll need this for service registration to the appropriate
-		// slaves
-		c.SlaveIDIP[slave.ID] = slave.PID.Host
-		c.SlaveIPID[slave.PID.Host] = slave.ID
-
-		// Pull out only the hostname, not the FQDN
-		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
 
 		// Make sure we've got everything initialized
 		if _, ok := c.MesosRecords[slave.ID]; !ok {
@@ -253,11 +253,7 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 			// Create a service registration for the base service
 			id := strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID}, ":")
 			c.TaskRecords[task.SlaveID].Current = append(c.TaskRecords[task.SlaveID].Current, createService(id, task.Name, address, 0, []string{c.SlaveIDHostname[task.SlaveID]}))
-			healthchecks := c.getHealthChecks(task, id)
-			c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, &AgentCheckRegistrationSlave{
-				TaskID: id,
-				Regs:   healthchecks,
-			})
+			c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id)...)
 		} else {
 
 			// Create a service registration for each port
@@ -269,11 +265,7 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 				}
 				id := strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":")
 				c.TaskRecords[task.SlaveID].Current = append(c.TaskRecords[task.SlaveID].Current, createService(id, task.Name, address, p, []string{c.SlaveIDHostname[task.SlaveID]}))
-				healthchecks := c.getHealthChecks(task, id)
-				c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, &AgentCheckRegistrationSlave{
-					TaskID: id,
-					Regs:   healthchecks,
-				})
+				c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id)...)
 			}
 		}
 	}
@@ -281,8 +273,6 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 
 func (c *ConsulBackend) Register() {
 
-	// TODO: Review this to make sure it makes sense
-	// Seems pretty friggin complicated and UGLY
 	var wg sync.WaitGroup
 
 	for agentid, _ := range c.Agents {
@@ -294,25 +284,15 @@ func (c *ConsulBackend) Register() {
 
 			// May not have any records for specific slave
 			if _, ok := c.MesosRecords[slaveid]; ok {
-				//log.Println("Adding mesos records for", slaveid)
 				services = append(services, getDeltaServices(c.MesosRecords[slaveid].Previous, c.MesosRecords[slaveid].Current)...)
-				c.MesosRecords[slaveid].Previous = c.MesosRecords[slaveid].Current
-				c.MesosRecords[slaveid].Current = nil
 			}
 			if _, ok := c.FrameworkRecords[slaveid]; ok {
-				//log.Println("Adding framework records for", slaveid)
 				services = append(services, getDeltaServices(c.FrameworkRecords[slaveid].Previous, c.FrameworkRecords[slaveid].Current)...)
-				c.FrameworkRecords[slaveid].Previous = c.FrameworkRecords[slaveid].Current
-				c.FrameworkRecords[slaveid].Current = nil
 			}
 			if _, ok := c.TaskRecords[slaveid]; ok {
-				//log.Println("Adding task records for", slaveid)
 				services = append(services, getDeltaServices(c.TaskRecords[slaveid].Previous, c.TaskRecords[slaveid].Current)...)
-				c.TaskRecords[slaveid].Previous = c.TaskRecords[slaveid].Current
-				c.TaskRecords[slaveid].Current = nil
 			}
 
-			//log.Println("Changes:", len(services))
 			for _, service := range services {
 				err := c.Agents[agentid].ServiceRegister(service)
 				if err != nil {
@@ -326,20 +306,20 @@ func (c *ConsulBackend) Register() {
 					continue
 				}
 
-				checks := []*consul.AgentCheckRegistration{}
-				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Previous, c.HealthChecks[slaveid].Current, service.ID)...)
-
-				for _, hc := range checks {
-					err := c.Agents[agentid].CheckRegister(hc)
-					if err != nil {
-						log.Println("Failed to register healthcheck for service", service.ID, err)
-						continue
-					}
-				}
 			}
 
+			checks := []*consul.AgentCheckRegistration{}
 			if _, ok := c.HealthChecks[slaveid]; ok {
-				c.HealthChecks[slaveid].Previous = c.HealthChecks[slaveid].Current
+				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Previous, c.HealthChecks[slaveid].Current)...)
+			}
+
+			for _, hc := range checks {
+				log.Println("Registering check", hc.Name)
+				err := c.Agents[agentid].CheckRegister(hc)
+				if err != nil {
+					log.Println("Failed to register healthcheck for service", hc.ServiceID, err)
+					continue
+				}
 			}
 			wg.Done()
 		}()
@@ -349,8 +329,6 @@ func (c *ConsulBackend) Register() {
 
 func (c *ConsulBackend) Cleanup() {
 
-	// TODO: Review this to make sure it makes sense
-	// Seems pretty friggin complicated and UGLY
 	var wg sync.WaitGroup
 
 	for agentid, _ := range c.Agents {
@@ -363,15 +341,20 @@ func (c *ConsulBackend) Cleanup() {
 			// May not have any records for specific slave
 			if _, ok := c.MesosRecords[slaveid]; ok {
 				services = append(services, getDeltaServices(c.MesosRecords[slaveid].Current, c.MesosRecords[slaveid].Previous)...)
+				c.MesosRecords[slaveid].Previous = c.MesosRecords[slaveid].Current
+				c.MesosRecords[slaveid].Current = nil
 			}
 			if _, ok := c.FrameworkRecords[slaveid]; ok {
 				services = append(services, getDeltaServices(c.FrameworkRecords[slaveid].Current, c.FrameworkRecords[slaveid].Previous)...)
+				c.FrameworkRecords[slaveid].Previous = c.FrameworkRecords[slaveid].Current
+				c.FrameworkRecords[slaveid].Current = nil
 			}
 			if _, ok := c.TaskRecords[slaveid]; ok {
 				services = append(services, getDeltaServices(c.TaskRecords[slaveid].Current, c.TaskRecords[slaveid].Previous)...)
+				c.TaskRecords[slaveid].Previous = c.TaskRecords[slaveid].Current
+				c.TaskRecords[slaveid].Current = nil
 			}
 
-			//log.Println("Changes:", len(services))
 			for _, service := range services {
 				err := c.Agents[agentid].ServiceDeregister(service.ID)
 				if err != nil {
@@ -379,6 +362,17 @@ func (c *ConsulBackend) Cleanup() {
 					log.Println("Error:", err)
 					continue
 				}
+			}
+			checks := []*consul.AgentCheckRegistration{}
+			if _, ok := c.HealthChecks[slaveid]; ok {
+				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Previous, c.HealthChecks[slaveid].Current)...)
+				c.HealthChecks[slaveid].Previous = c.HealthChecks[slaveid].Current
+				c.HealthChecks[slaveid].Current = nil
+			}
+
+			for _, hc := range checks {
+				log.Println(hc.ServiceID)
+				log.Println("Removing", hc)
 			}
 			wg.Done()
 		}()
@@ -538,36 +532,18 @@ func getDeltaServices(oldservices []*consul.AgentServiceRegistration, newservice
 	return delta
 }
 
-func getDeltaChecks(oldchecks []*AgentCheckRegistrationSlave, newchecks []*AgentCheckRegistrationSlave, task string) []*consul.AgentCheckRegistration {
-	log.Println("Task:", task)
+func getDeltaChecks(oldchecks []*consul.AgentCheckRegistration, newchecks []*consul.AgentCheckRegistration) []*consul.AgentCheckRegistration {
 	delta := []*consul.AgentCheckRegistration{}
 	for _, newhc := range newchecks {
-		log.Println("Newhc.taskid:", newhc.TaskID)
-		if newhc.TaskID != task {
-			continue
+		found := false
+		for _, oldhc := range oldchecks {
+			if compareCheck(newhc, oldhc) {
+				found = true
+				break
+			}
 		}
-		for _, newregs := range newhc.Regs {
-			log.Println("Newregs", newregs)
-			found := false
-			for _, oldhc := range oldchecks {
-				log.Println("oldhc.taskic:", oldhc.TaskID)
-				if oldhc.TaskID != task {
-					continue
-				}
-				for _, oldregs := range oldhc.Regs {
-					log.Println("oldregs", oldregs)
-					if compareCheck(newregs, oldregs) {
-						found = true
-						break
-					}
-				}
-				if found {
-					break
-				}
-			}
-			if !found {
-				delta = append(delta, newregs)
-			}
+		if !found {
+			delta = append(delta, newhc)
 		}
 	}
 	return delta
