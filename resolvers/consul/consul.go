@@ -48,7 +48,8 @@ type TaskCheck struct {
 }
 
 func New(config records.Config, errch chan error, version string) *ConsulBackend {
-	cfg := consulconfig.NewConfig()
+	cfg := consulconfig.NewConfig(config)
+
 	client, err := consul.NewClient(cfg)
 	if err != nil {
 		errch <- err
@@ -66,7 +67,7 @@ func New(config records.Config, errch chan error, version string) *ConsulBackend
 		Client:           client,
 		Config:           cfg,
 		LookupOrder:      []string{"docker", "netinfo", "host"},
-		Refresh:          5,
+		Refresh:          config.RefreshSeconds,
 		ServicePrefix:    "mesos-dns",
 		SlaveIDIP:        make(map[string]string),
 		SlaveIPID:        make(map[string]string),
