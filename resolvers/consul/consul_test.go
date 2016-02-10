@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/testutil"
+	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/records/state"
 )
@@ -301,6 +302,9 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	config := records.NewConfig()
 	errch := make(chan error)
 	version := "1.0"
+
+	// Initialize logger
+	logging.SetupLogs()
 
 	// Hopefully the ENV vars above should allow us
 	// to override the defaults

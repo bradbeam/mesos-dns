@@ -2,13 +2,13 @@ package consul
 
 import (
 	"encoding/json"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
 
 	consul "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
+	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/records/state"
 	consulconfig "github.com/mesosphere/mesos-dns/resolvers/consul/config"
@@ -179,7 +179,7 @@ func (c *ConsulBackend) generateMesosRecords() {
 
 		port, err := strconv.Atoi(slave.PID.Port)
 		if err != nil {
-			log.Println(err)
+			logging.Error.Println("Failed to get port for slave", slave.ID, ". Error:", err)
 			continue
 		}
 
@@ -189,8 +189,13 @@ func (c *ConsulBackend) generateMesosRecords() {
 		}
 
 		c.MesosRecords[slave.ID].Current = append(c.MesosRecords[slave.ID].Current, createService(strings.Join([]string{c.ServicePrefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, tags))
+		for _, rec := range c.MesosRecords[slave.ID].Current {
+			logging.VeryVerbose.Println("Mesos records:", rec.ID, "=>", rec.Address)
+		}
 
 	}
+	// This is gonna be wrong when current + previous is included I think
+	logging.Verbose.Println("Found", len(c.MesosRecords), "mesos records")
 }
 
 func (c *ConsulBackend) generateFrameworkRecords() {
@@ -199,7 +204,7 @@ func (c *ConsulBackend) generateFrameworkRecords() {
 		// task, pid, name, hostname
 		port, err := strconv.Atoi(framework.PID.Port)
 		if err != nil {
-			log.Println(err)
+			logging.Error.Println("Failed to get port for framework", framework.Name, ". Error:", err)
 			continue
 		}
 
@@ -218,7 +223,7 @@ func (c *ConsulBackend) generateFrameworkRecords() {
 		}
 
 		if slaveid == "" {
-			log.Println("Unable to find slave for", framework.Name)
+			logging.Error.Println("Unable to find slave for", framework.Name)
 			continue
 		}
 
@@ -228,6 +233,10 @@ func (c *ConsulBackend) generateFrameworkRecords() {
 		}
 
 		c.FrameworkRecords[slaveid].Current = append(c.FrameworkRecords[slaveid].Current, createService(strings.Join([]string{c.ServicePrefix, framework.Name}, ":"), framework.Name, framework.PID.Host, port, []string{}))
+		for _, rec := range c.FrameworkRecords[slaveid].Current {
+			logging.VeryVerbose.Println("Framework record:", rec.ID, "=>", rec.Address)
+		}
+		logging.Verbose.Println("Found", len(c.FrameworkRecords), "framework records on slave", slaveid)
 	}
 }
 
@@ -260,7 +269,7 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 			for _, port := range task.Ports() {
 				p, err := strconv.Atoi(port)
 				if err != nil {
-					log.Println("Something stupid happenend and we cant convert", port, "to int")
+					logging.Error.Println("Failed to get port for task", task.ID, ", Skipping. Error:", err)
 					continue
 				}
 				id := strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":")
@@ -268,6 +277,14 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 				c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id)...)
 			}
 		}
+		for _, rec := range c.TaskRecords[task.SlaveID].Current {
+			logging.VeryVerbose.Println("Task record", rec.ID, "=>", rec.Address)
+		}
+		for _, rec := range c.HealthChecks[task.SlaveID].Current {
+			logging.VeryVerbose.Println("Health check record", rec.ID, "=>", rec.Name, "/", rec.ServiceID)
+		}
+		logging.Verbose.Println("Found", len(c.TaskRecords[task.SlaveID].Current), "task records on slave", task.SlaveID)
+		logging.Verbose.Println("Found", len(c.HealthChecks[task.SlaveID].Current), "health check records on slave", task.SlaveID)
 	}
 }
 
@@ -296,13 +313,12 @@ func (c *ConsulBackend) Register() {
 			for _, service := range services {
 				err := c.Agents[agentid].ServiceRegister(service)
 				if err != nil {
-					log.Println("Failed to register service", service.ID, "on agent", agentid)
-					log.Println("Error:", err)
+					logging.Error.Println("Failed to register service", service.ID, "on agent", agentid, ". Error:", err)
 					continue
 				}
 
 				if _, ok := c.HealthChecks[slaveid]; !ok {
-					//log.Println("No healthchecks for", service.ID, "on slave", slaveid)
+					logging.VeryVerbose.Println("No healthchecks for", service.ID, "on slave", slaveid)
 					continue
 				}
 
@@ -314,10 +330,10 @@ func (c *ConsulBackend) Register() {
 			}
 
 			for _, hc := range checks {
-				log.Println("Registering check", hc.Name)
+				logging.VeryVerbose.Println("Registering check", hc.Name, "for service", hc.ServiceID)
 				err := c.Agents[agentid].CheckRegister(hc)
 				if err != nil {
-					log.Println("Failed to register healthcheck for service", hc.ServiceID, err)
+					logging.Error.Println("Failed to register healthcheck for service", hc.ServiceID, ". Error:", err)
 					continue
 				}
 			}
@@ -358,15 +374,15 @@ func (c *ConsulBackend) Cleanup() {
 			for _, service := range services {
 				err := c.Agents[agentid].ServiceDeregister(service.ID)
 				if err != nil {
-					log.Println("Failed to deregister service", service.ID, "on agent", agentid, ". Falling back to catalog deregistration.")
-					log.Println("Error:", err)
+					logging.Verbose.Println("Failed to deregister service", service.ID, "on agent", agentid, ". Falling back to catalog deregistration.")
+					logging.Error.Println("Error:", err)
 					dereg := &consul.CatalogDeregistration{
 						Node:      c.SlaveIDHostname[slaveid],
 						ServiceID: service.ID,
 					}
 					_, err = c.Client.Catalog().Deregister(dereg, nil)
 					if err != nil {
-						log.Println("Failed to deregister service from catalog", err)
+						logging.Error.Println("Failed to deregister service from catalog", err)
 						continue
 					}
 				}
@@ -379,17 +395,18 @@ func (c *ConsulBackend) Cleanup() {
 			}
 
 			for _, hc := range checks {
-				log.Println("Removing", hc.ID)
+				logging.VeryVerbose.Println("Removing", hc.ID)
 				err := c.Agents[agentid].CheckDeregister(hc.ID)
 				if err != nil {
-					log.Println("Failed to deregister check", hc.ID, "on agent", agentid, " . Falling back to catalog deregistration.")
+					logging.Verbose.Println("Failed to deregister check", hc.ID, "on agent", agentid, " . Falling back to catalog deregistration.")
+					logging.Error.Println("Error:", err)
 					dereg := &consul.CatalogDeregistration{
 						Node:    c.SlaveIDHostname[slaveid],
 						CheckID: hc.ID,
 					}
 					_, err = c.Client.Catalog().Deregister(dereg, nil)
 					if err != nil {
-						log.Println("Failed to deregister service from catalog", err)
+						logging.Error.Println("Failed to deregister check", hc.ID, "from catalog", err)
 						continue
 					}
 				}
@@ -416,8 +433,7 @@ func (c *ConsulBackend) getAddress(task state.Task) string {
 			address = task.IP("host")
 		case "label":
 			if len(lookupkey) != 2 {
-				log.Println("Lookup order label is not in proper format `label:labelname`")
-				continue
+				logging.Error.Fatal("Lookup order label is not in proper format `label:labelname`")
 			}
 			addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
 			if len(addresses) > 0 {
@@ -450,13 +466,13 @@ func (c *ConsulBackend) getHealthChecks(task state.Task, id string) []*consul.Ag
 			pair, _, err := kv.Get("healthchecks/"+endpoint, nil)
 			// If key does not exist in consul, pair is nil
 			if pair == nil || err != nil {
-				log.Println("Healthcheck healthchecks/"+endpoint, "not found in consul, skipping")
+				logging.Verbose.Println("Healthcheck healthchecks/"+endpoint, "not found in consul, skipping")
 				continue
 			}
 			check := &consul.AgentCheckRegistration{}
 			err = json.Unmarshal(pair.Value, check)
 			if err != nil {
-				log.Println(err)
+				logging.Error.Println(err)
 				continue
 			}
 			check.ID = strings.Join([]string{check.ID, id}, ":")
@@ -464,8 +480,7 @@ func (c *ConsulBackend) getHealthChecks(task state.Task, id string) []*consul.Ag
 			hc = append(hc, check)
 		}
 	}
-	// Maybe keep this in for debug logging
-	//log.Println("Found", len(hc), "healthchecks for", task.Name)
+	logging.VeryVerbose.Println("Found", len(hc), "healthchecks for", id)
 
 	return hc
 
