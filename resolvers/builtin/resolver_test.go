@@ -42,7 +42,7 @@ func TestCleanWild(t *testing.T) {
 
 func TestShuffleAnswers(t *testing.T) {
 	var res Resolver
-    res.config = NewConfig()
+	res.config = NewConfig()
 
 	m := new(dns.Msg)
 
