@@ -46,8 +46,8 @@ type Config struct {
 }
 
 // NewConfig return the default config of the resolver
-func NewConfig() Config {
-	return Config{
+func NewConfig() *Config {
+	return &Config{
 		Domain:              "mesos",
 		IPSources:           []string{"netinfo", "mesos", "host"},
 		RefreshSeconds:      60,
@@ -138,7 +138,7 @@ func ReadConfig(file string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config file %q: %v", file, err)
 	}
 
-	return &c, nil
+	return c, nil
 }
 
 func unique(ss []string) []string {
