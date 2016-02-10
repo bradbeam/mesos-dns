@@ -42,6 +42,7 @@ func TestCleanWild(t *testing.T) {
 
 func TestShuffleAnswers(t *testing.T) {
 	var res Resolver
+	res.config = NewConfig()
 
 	m := new(dns.Msg)
 
@@ -268,7 +269,7 @@ func TestHTTP(t *testing.T) {
 				"Version": "0.1.1",
 			},
 		},
-		{"/v1/config", http.StatusOK, &Config{}, &res.config},
+		{"/v1/config", http.StatusOK, NewConfig(), res.config},
 		{"/v1/services/_leader._tcp.mesos.", http.StatusOK, []interface{}{},
 			[]interface{}{map[string]interface{}{
 				"service": "_leader._tcp.mesos.",
@@ -318,10 +319,10 @@ func fakeDNS() (*Resolver, error) {
 	config.RecurseOn = false
 
 	rg := records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
-	rg.Config = &c
+	rg.Config = c
 
 	testch := make(chan error)
-	res := New(*config, testch, rg, "0.1.1")
+	res := New(config, testch, rg, "0.1.1")
 	res.rng.Seed(0) // for deterministic tests
 
 	b, err := ioutil.ReadFile("../../factories/fake.json")

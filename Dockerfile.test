@@ -4,5 +4,7 @@ COPY ./ "$GOPATH/src/github.com/mesosphere/mesos-dns"
 
 # Only update dependencies if we are not using godep
 RUN cd "$GOPATH/src/github.com/mesosphere/mesos-dns" && ( test -d ./Godeps || echo go get -u )
+# Need consul in $PATH so we can do consul tests
+RUN go get github.com/hashicorp/consul
 
 WORKDIR "$GOPATH/src/github.com/mesosphere/mesos-dns"

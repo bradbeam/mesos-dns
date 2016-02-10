@@ -16,12 +16,12 @@ func TestNewConfigValidates(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	err = validateEnabledServices(&c)
+	err = validateEnabledServices(c)
 	if err == nil {
 		t.Error("expected error because no masters and no zk servers are configured by default")
 	}
 	c.Zk = "foo"
-	err = validateEnabledServices(&c)
+	err = validateEnabledServices(c)
 	if err != nil {
 		t.Error(err)
 	}

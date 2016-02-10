@@ -1,8 +1,19 @@
 package consul
 
-import capi "github.com/hashicorp/consul/api"
+import (
+	capi "github.com/hashicorp/consul/api"
+)
 
-func NewConfig() *capi.Config {
-	// Probably need to update this with the merging of defined config options
-	return capi.DefaultConfig()
+type Config struct {
+	LookupOrder   []string
+	ServicePrefix string
+	APIConfig     *capi.Config
+}
+
+func NewConfig() *Config {
+	return &Config{
+		LookupOrder:   []string{"docker", "netinfo", "host"},
+		ServicePrefix: "mesos-dns",
+		APIConfig:     capi.DefaultConfig(),
+	}
 }

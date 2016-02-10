@@ -25,7 +25,7 @@ import (
 // Resolver holds configuration state and the resource records
 type Resolver struct {
 	version string
-	config  Config
+	config  *Config
 	rg      *records.RecordGenerator
 	rsLock  sync.RWMutex
 	rng     *rand.Rand
@@ -33,7 +33,7 @@ type Resolver struct {
 }
 
 // New returns a Resolver with the given version and configuration.
-func New(config Config, errch chan error, rg *records.RecordGenerator, version string) *Resolver {
+func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *Resolver {
 	r := &Resolver{
 		config: config,
 		rg:     rg,
