@@ -47,9 +47,13 @@ type TaskCheck struct {
 }
 
 func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *ConsulBackend {
-	cfg := NewConfig()
+	cfg := capi.DefaultConfig()
+	cfg.Address = config.Address
+	cfg.Datacenter = config.Datacenter
+	cfg.Scheme = config.Scheme
+	cfg.Token = config.Token
 
-	client, err := capi.NewClient(cfg.APIConfig)
+	client, err := capi.NewClient(cfg)
 	if err != nil {
 		errch <- err
 		return &ConsulBackend{}
@@ -58,13 +62,13 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	// Since the consul api is dumb and wont return the http port
 	// we'll assume all agents are running on the same port as
 	// the initially specified consul server
-	port := strings.Split(cfg.APIConfig.Address, ":")[1]
+	port := strings.Split(config.Address, ":")[1]
 
 	return &ConsulBackend{
 		Agents:           make(map[string]*capi.Agent),
 		AgentPort:        port,
 		Client:           client,
-		Config:           cfg.APIConfig,
+		Config:           cfg,
 		LookupOrder:      []string{"docker", "netinfo", "host"},
 		Refresh:          rg.Config.RefreshSeconds,
 		ServicePrefix:    "mesos-dns",
@@ -119,8 +123,12 @@ func (c *ConsulBackend) connectAgents() error {
 			}
 		}
 		cfg := NewConfig()
-		cfg.APIConfig.Address = agent.Addr + ":" + c.AgentPort
-		client, err := capi.NewClient(cfg.APIConfig)
+		cfg.Address = agent.Addr + ":" + c.AgentPort
+		cfg.Datacenter = c.Config.Datacenter
+		cfg.Scheme = c.Config.Scheme
+		cfg.Token = c.Config.Token
+
+		client, err := capi.NewClient(c.Config)
 		if err != nil {
 			// How do we want to handle consul agent not being responsive
 			return err
