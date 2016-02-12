@@ -46,13 +46,14 @@ func TestMesosRecords(t *testing.T) {
 	backend.generateMesosRecords()
 
 	// Each slave is a single id
-	expected := make(map[string]int)
-	expected["20160107-001256-134875658-5050-27524-S66"] = 1
-	expected[LOCALSLAVEID] = 1
-	expected["20160107-001256-134875658-5050-27524-S1"] = 1
-	expected["20160107-001256-134875658-5050-27524-S2"] = 1
-	expected["20160107-001256-134875658-5050-27524-S0"] = 1
-	expected["master@127.0.0.2:5050"] = 1
+	expected := map[string]int{
+		"20160107-001256-134875658-5050-27524-S66": 1,
+		LOCALSLAVEID:                               1,
+		"20160107-001256-134875658-5050-27524-S1":  1,
+		"20160107-001256-134875658-5050-27524-S2":  1,
+		"20160107-001256-134875658-5050-27524-S0":  1,
+		"master@127.0.0.2:5050":                    1,
+	}
 
 	// 6 records ( 5x slaves, 1x leader )
 	validateStateRecords(t, backend.MesosRecords, 6, expected)
@@ -66,8 +67,7 @@ func TestFrameworkRecords(t *testing.T) {
 	backend.generateFrameworkRecords()
 
 	// Framework is only running on a single slave
-	expected := make(map[string]int)
-	expected[LOCALSLAVEID] = 1
+	expected := map[string]int{LOCALSLAVEID: 1}
 
 	// 1 record ( marathon )
 	validateStateRecords(t, backend.FrameworkRecords, 1, expected)
@@ -87,12 +87,13 @@ func TestTaskRecords(t *testing.T) {
 	}
 
 	// Each slave can have a different number of tasks running
-	expected := make(map[string]int)
-	expected["20160107-001256-134875658-5050-27524-S66"] = 2
-	expected[LOCALSLAVEID] = 3
-	expected["20160107-001256-134875658-5050-27524-S1"] = 3
-	expected["20160107-001256-134875658-5050-27524-S2"] = 2
-	expected["20160107-001256-134875658-5050-27524-S0"] = 2
+	expected := map[string]int{
+		"20160107-001256-134875658-5050-27524-S66": 2,
+		LOCALSLAVEID:                               3,
+		"20160107-001256-134875658-5050-27524-S1":  3,
+		"20160107-001256-134875658-5050-27524-S2":  2,
+		"20160107-001256-134875658-5050-27524-S0":  2,
+	}
 
 	// 5 Records ( 5x slaves )
 	validateStateRecords(t, backend.TaskRecords, 5, expected)
@@ -114,12 +115,13 @@ func TestHealthchecks(t *testing.T) {
 	}
 
 	// Each slave can have a different number of tasks running
-	expected := make(map[string]int)
-	expected["20160107-001256-134875658-5050-27524-S66"] = 2
-	expected[LOCALSLAVEID] = 3
-	expected["20160107-001256-134875658-5050-27524-S1"] = 3
-	expected["20160107-001256-134875658-5050-27524-S2"] = 2
-	expected["20160107-001256-134875658-5050-27524-S0"] = 2
+	expected := map[string]int{
+		"20160107-001256-134875658-5050-27524-S66": 2,
+		LOCALSLAVEID:                               3,
+		"20160107-001256-134875658-5050-27524-S1":  3,
+		"20160107-001256-134875658-5050-27524-S2":  2,
+		"20160107-001256-134875658-5050-27524-S0":  2,
+	}
 
 	// 5 Records ( 5x slaves )
 	validateStateRecords(t, backend.TaskRecords, 5, expected)
@@ -199,19 +201,20 @@ func TestCleanupRecords(t *testing.T) {
 	backend.HealthChecks[slaveid].Previous = append(backend.HealthChecks[slaveid].Previous, hc)
 	backend.Reload(rg)
 	/*
-		expectedhc := make(map[string]int)
-		expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-		expectedhc["mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-		expectedhc["mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-		expectedhc["mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-		expectedhc["mesos-dns:mesosslave-r01-s01:nginx-no-net.215c789f-c611-11e5-aca8-0242965d2034:31477"] = 0
-		expectedhc["mesos-dns:mesosslave-r01-s01:nginx-host-net.7a43b7d6-c611-11e5-aca8-0242965d2034:31423"] = 0
-		expectedhc["mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230"] = 2
-		expectedhc["mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-		expectedhc["mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-		expectedhc["mesos-dns:mesosmaster-r03-s03:nginx.2a8898a8-b9a7-11e5-b2bb-0242d4d0a230:31381"] = 0
-		expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31383"] = 0
-		expectedhc["mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
+		expectedhc := map[string]int{
+			"mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
+			"mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31384": 0,
+			"mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
+			"mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
+			"mesos-dns:mesosslave-r01-s01:nginx-no-net.215c789f-c611-11e5-aca8-0242965d2034:31477": 0,
+			"mesos-dns:mesosslave-r01-s01:nginx-host-net.7a43b7d6-c611-11e5-aca8-0242965d2034:31423": 0,
+			"mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230": 2,
+			"mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
+			"mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31384": 0,
+			"mesos-dns:mesosmaster-r03-s03:nginx.2a8898a8-b9a7-11e5-b2bb-0242d4d0a230:31381": 0,
+			"mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
+			"mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31384": 0,
+		}
 		validateHealthRecords(t, backend.HealthChecks, expectedhc)
 	*/
 }
