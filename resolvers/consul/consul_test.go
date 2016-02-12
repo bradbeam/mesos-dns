@@ -300,6 +300,7 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	defer os.Setenv("CONSUL_HTTP_ADDR", "")
 
 	config := NewConfig()
+	config.Address = server.HTTPAddr
 	errch := make(chan error)
 	version := "1.0"
 
