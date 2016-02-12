@@ -1,7 +1,5 @@
 package consul
 
-import ()
-
 type Config struct {
 	Address       string
 	Datacenter    string

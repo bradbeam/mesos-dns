@@ -17,7 +17,7 @@ type ConsulBackend struct {
 	Agents           map[string]*capi.Agent
 	AgentPort        string
 	Client           *capi.Client
-	Config           *capi.Config
+	Config           *Config
 	LookupOrder      []string
 	Refresh          int
 	ServicePrefix    string
@@ -68,7 +68,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		Agents:           make(map[string]*capi.Agent),
 		AgentPort:        port,
 		Client:           client,
-		Config:           cfg,
+		Config:           config,
 		LookupOrder:      []string{"docker", "netinfo", "host"},
 		Refresh:          rg.Config.RefreshSeconds,
 		ServicePrefix:    "mesos-dns",
@@ -122,13 +122,13 @@ func (c *ConsulBackend) connectAgents() error {
 				return err
 			}
 		}
-		cfg := NewConfig()
+		cfg := capi.DefaultConfig()
 		cfg.Address = agent.Addr + ":" + c.AgentPort
 		cfg.Datacenter = c.Config.Datacenter
 		cfg.Scheme = c.Config.Scheme
 		cfg.Token = c.Config.Token
 
-		client, err := capi.NewClient(c.Config)
+		client, err := capi.NewClient(cfg)
 		if err != nil {
 			// How do we want to handle consul agent not being responsive
 			return err
