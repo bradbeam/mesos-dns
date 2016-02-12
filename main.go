@@ -87,8 +87,8 @@ func reloadResolvers(config *records.Config, errch chan error, rs []resolvers.Re
 	err := rg.ParseState(config)
 
 	if err != nil {
-		errch <- err
 		logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)
+		errch <- err
 	} else {
 		for _, resolver := range rs {
 			resolver.Reload(rg)

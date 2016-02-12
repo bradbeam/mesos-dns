@@ -5,7 +5,6 @@ import (
 
 	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
-	"github.com/mesosphere/mesos-dns/resolvers/bind"
 	"github.com/mesosphere/mesos-dns/resolvers/builtin"
 	"github.com/mesosphere/mesos-dns/resolvers/consul"
 	"github.com/mesosphere/mesos-dns/utils"
@@ -23,18 +22,14 @@ func New(errch chan error, rg *records.RecordGenerator, version string) []Resolv
 
 		// Each backend receives their config as type interface{} or nil.
 		switch strings.ToLower(k) {
-		case "consul":
-			conf := consul.NewConfig()
-			utils.Merge(v.(map[string]interface{}), conf)
-			resolvers = append(resolvers, consul.New(conf, errch, rg, version))
 		case "builtin":
 			conf := builtin.NewConfig()
 			utils.Merge(v.(map[string]interface{}), conf)
 			resolvers = append(resolvers, builtin.New(conf, errch, rg, version))
-		case "bind":
-			conf := bind.NewConfig()
+		case "consul":
+			conf := consul.NewConfig()
 			utils.Merge(v.(map[string]interface{}), conf)
-			resolvers = append(resolvers, bind.New(conf, errch, rg, version))
+			resolvers = append(resolvers, consul.New(conf, errch, rg, version))
 		}
 	}
 
