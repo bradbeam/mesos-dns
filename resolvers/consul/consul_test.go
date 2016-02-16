@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,7 +239,7 @@ func TestCache(t *testing.T) {
 	slaveid := backend.SlaveIPID["127.0.0.1"]
 
 	// Create new service
-	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.1", 0, []string{})
+	service := createService(strings.Join([]string{backend.Config.ServicePrefix, "REMOVEMESERVICE"}, ":"), "REMOVEMESERVICE", "127.0.0.1", 0, []string{})
 	// Add a new service to current
 	backend.TaskRecords[slaveid].Current = append(backend.TaskRecords[slaveid].Current, service)
 	// Compare
@@ -264,6 +265,22 @@ func TestCache(t *testing.T) {
 		t.Error("Did not get back additional healthcheck registration. Expected 1 received", len(deltachecks))
 	}
 
+	// Do some juggling for tests
+	save := backend.TaskRecords[slaveid].Previous
+
+	// Go ahead and register our new service
+	backend.Register()
+	validateRecords(t, backend, 7)
+
+	// Restore our saved previous information
+	// so we can essentiall orphan `service`
+	backend.TaskRecords[slaveid].Previous = save
+	backend.TaskRecords[slaveid].Current = nil
+
+	backend.Count = backend.Config.CacheRefresh - 1
+	// Clean up our mess
+	backend.Reload(rg)
+	validateRecords(t, backend, 6)
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
