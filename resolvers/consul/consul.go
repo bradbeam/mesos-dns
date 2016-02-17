@@ -2,6 +2,7 @@ package consul
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,11 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	client, err := capi.NewClient(cfg)
 	if err != nil {
 		errch <- err
+		return &ConsulBackend{}
+	}
+
+	if config.CacheRefresh <= 0 {
+		errch <- errors.New("Cache refresh must be greater than 0")
 		return &ConsulBackend{}
 	}
 
