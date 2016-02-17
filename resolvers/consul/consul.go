@@ -2,6 +2,7 @@ package consul
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ type ConsulBackend struct {
 	AgentPort        string
 	Client           *capi.Client
 	Config           *Config
+	Count            int
 	LookupOrder      []string
 	Refresh          int
 	ServicePrefix    string
@@ -29,6 +31,7 @@ type ConsulBackend struct {
 	MesosRecords     map[string]*ConsulRecords
 	TaskRecords      map[string]*ConsulRecords
 	HealthChecks     map[string]*ConsulChecks
+	ConsulServices   map[string]*ConsulRecords
 }
 
 type ConsulRecords struct {
@@ -59,6 +62,11 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		return &ConsulBackend{}
 	}
 
+	if config.CacheRefresh <= 0 {
+		errch <- errors.New("Cache refresh must be greater than 0")
+		return &ConsulBackend{}
+	}
+
 	// Since the consul api is dumb and wont return the http port
 	// we'll assume all agents are running on the same port as
 	// the initially specified consul server
@@ -69,6 +77,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		AgentPort:        port,
 		Client:           client,
 		Config:           config,
+		Count:            0,
 		LookupOrder:      []string{"docker", "netinfo", "host"},
 		Refresh:          rg.Config.RefreshSeconds,
 		ServicePrefix:    "mesos-dns",
@@ -80,15 +89,22 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		MesosRecords:     make(map[string]*ConsulRecords),
 		TaskRecords:      make(map[string]*ConsulRecords),
 		HealthChecks:     make(map[string]*ConsulChecks),
+		ConsulServices:   make(map[string]*ConsulRecords),
 	}
 }
 
 func (c *ConsulBackend) Reload(rg *records.RecordGenerator) {
+	c.Count++
 	// Get a snapshot of state.json
 	c.State = rg.State
+
 	// Get agent members
 	// and initialize client connections
-	c.connectAgents()
+	err := c.connectAgents()
+	if err != nil {
+		logging.Error.Println("Failed to connect to consul agent", err)
+		return
+	}
 
 	// Generate all of the necessary records
 	c.generateMesosRecords()
@@ -118,8 +134,6 @@ func (c *ConsulBackend) connectAgents() error {
 			_, err := c.Agents[agent.Addr].Self()
 			if err == nil {
 				continue
-			} else {
-				return err
 			}
 		}
 		cfg := capi.DefaultConfig()
@@ -139,9 +153,10 @@ func (c *ConsulBackend) connectAgents() error {
 		if err != nil {
 			// Dump agent?
 			return err
-		} else {
-			c.Agents[agent.Addr] = client.Agent()
 		}
+
+		c.Agents[agent.Addr] = client.Agent()
+
 	}
 
 	return nil
@@ -359,25 +374,32 @@ func (c *ConsulBackend) Cleanup() {
 		wg.Add(1)
 		go func() {
 			services := []*capi.AgentServiceRegistration{}
+			currentservices := []*capi.AgentServiceRegistration{}
 
 			// May not have any records for specific slave
 			if _, ok := c.MesosRecords[slaveid]; ok {
 				services = append(services, getDeltaServices(c.MesosRecords[slaveid].Current, c.MesosRecords[slaveid].Previous)...)
+				currentservices = append(currentservices, c.MesosRecords[slaveid].Current...)
 				c.MesosRecords[slaveid].Previous = c.MesosRecords[slaveid].Current
 				c.MesosRecords[slaveid].Current = nil
 			}
 			if _, ok := c.FrameworkRecords[slaveid]; ok {
 				services = append(services, getDeltaServices(c.FrameworkRecords[slaveid].Current, c.FrameworkRecords[slaveid].Previous)...)
+				currentservices = append(currentservices, c.FrameworkRecords[slaveid].Current...)
 				c.FrameworkRecords[slaveid].Previous = c.FrameworkRecords[slaveid].Current
 				c.FrameworkRecords[slaveid].Current = nil
 			}
 			if _, ok := c.TaskRecords[slaveid]; ok {
 				services = append(services, getDeltaServices(c.TaskRecords[slaveid].Current, c.TaskRecords[slaveid].Previous)...)
+				currentservices = append(currentservices, c.TaskRecords[slaveid].Current...)
 				c.TaskRecords[slaveid].Previous = c.TaskRecords[slaveid].Current
 				c.TaskRecords[slaveid].Current = nil
 			}
 
+			services = append(services, getDeltaServices(currentservices, c.getServices(agentid))...)
+
 			for _, service := range services {
+				logging.VeryVerbose.Println("Removing service", service.ID, "on agent", agentid)
 				err := c.Agents[agentid].ServiceDeregister(service.ID)
 				if err != nil {
 					logging.Verbose.Println("Failed to deregister service", service.ID, "on agent", agentid, ". Falling back to catalog deregistration.")
@@ -490,6 +512,45 @@ func (c *ConsulBackend) getHealthChecks(task state.Task, id string) []*capi.Agen
 
 	return hc
 
+}
+
+func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistration {
+	svcs := []*capi.AgentServiceRegistration{}
+	if c.Config.CacheOnly {
+		return svcs
+	}
+
+	if c.Count%c.Config.CacheRefresh != 0 {
+		return svcs
+	}
+
+	// Reset the counter so we dont overflow
+	c.Count = 0
+	services, err := c.Agents[agentid].Services()
+	if err != nil {
+		logging.Error.Println("Failed to get list of services from consul@", agentid, ".", err)
+		return svcs
+	}
+
+	for _, service := range services {
+		// Filter only services we care about
+		if strings.Split(service.ID, ":")[0] != c.ServicePrefix {
+			continue
+		}
+
+		// Create ServiceRegistration structs for each service so we can compare later
+		sr := &capi.AgentServiceRegistration{
+			ID:      service.ID,
+			Name:    service.Service,
+			Tags:    service.Tags,
+			Port:    service.Port,
+			Address: service.Address,
+		}
+		// Make sure we've got everything initialized
+		svcs = append(svcs, sr)
+	}
+
+	return svcs
 }
 
 func createService(id string, name string, address string, port int, tags []string) *capi.AgentServiceRegistration {
