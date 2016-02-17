@@ -518,6 +518,8 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 		return svcs
 	}
 
+	// Reset the counter so we dont overflow
+	c.Count = 0
 	services, err := c.Agents[agentid].Services()
 	if err != nil {
 		logging.Error.Println("Failed to get list of services from consul@", agentid, ".", err)
