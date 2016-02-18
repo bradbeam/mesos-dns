@@ -7,12 +7,14 @@ import (
 	"github.com/mesosphere/mesos-dns/logging"
 )
 
-func Merge(data map[string]interface{}, config interface{}) {
-	for k, v := range data {
-		err := SetField(config, k, v)
-		// May want to do more than just log these errors
-		if err != nil {
-			logging.Verbose.Printf("Error merging config key %v:", k, err)
+func Merge(data interface{}, config interface{}) {
+	if m, ok := data.(map[string]interface{}); ok {
+		for k, v := range m {
+			err := SetField(config, k, v)
+			// May want to do more than just log these errors
+			if err != nil {
+				logging.Verbose.Printf("Error merging config key %v:", k, err)
+			}
 		}
 	}
 }

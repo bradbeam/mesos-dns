@@ -60,8 +60,6 @@ func (rg *RecordGenerator) ParseState(c *Config) error {
 		return err
 	}
 
-	rg.State = sj
-
 	hostSpec := labels.RFC1123
 	if c.EnforceRFC952 {
 		hostSpec = labels.RFC952
@@ -219,6 +217,7 @@ func (rg *RecordGenerator) InsertState(sj state.State, domain string, ns string,
 	rg.slaveRecords(sj, domain, spec)
 	rg.masterRecord(domain, masters, sj.Leader)
 	rg.taskRecords(sj, domain, spec, ipSources)
+	rg.State = sj
 
 	return nil
 }

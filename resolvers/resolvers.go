@@ -24,11 +24,11 @@ func New(errch chan error, rg *records.RecordGenerator, version string) []Resolv
 		switch strings.ToLower(k) {
 		case "builtin":
 			conf := builtin.NewConfig()
-			utils.Merge(v.(map[string]interface{}), conf)
+			utils.Merge(v, conf)
 			resolvers = append(resolvers, builtin.New(conf, errch, rg, version))
 		case "consul":
 			conf := consul.NewConfig()
-			utils.Merge(v.(map[string]interface{}), conf)
+			utils.Merge(v, conf)
 			resolvers = append(resolvers, consul.New(conf, errch, rg, version))
 		}
 	}

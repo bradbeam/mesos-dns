@@ -293,7 +293,7 @@ func makeClientServer(t *testing.T) *testutil.TestServer {
 	// Create server
 	// Redirect logs to /dev/null cause we really dont care about consul agent ouput
 	server := testutil.NewTestServerConfig(t, func(c *testutil.TestServerConfig) {
-		c.NodeName = "mesosslave-r02-s02"
+		c.NodeName = LOCALSLAVENAME
 		c.LogLevel = "ERR"
 		c.Stdout = ioutil.Discard
 		c.Stderr = ioutil.Discard

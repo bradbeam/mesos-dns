@@ -108,9 +108,11 @@ func SetConfig(cjson string) *Config {
 	// print individual configurations for resolvers
 	logging.Verbose.Println("   - Resolvers:")
 	for k, v := range c.Resolvers {
-		logging.Verbose.Printf("     - %s:\n", k)
-		for key, val := range v.(map[string]interface{}) {
-			logging.Verbose.Printf("       - %s:\n%+v\n", key, val)
+		if m, ok := v.(map[string]interface{}); ok {
+			logging.Verbose.Printf("     - %s:\n", k)
+			for key, val := range m {
+				logging.Verbose.Printf("       - %s: %+v\n", key, val)
+			}
 		}
 	}
 
