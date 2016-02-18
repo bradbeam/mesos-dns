@@ -3,9 +3,10 @@ VERSION:=$(shell git describe --abbrev=4 --always --tags)
 CONTAINER=mesos-dns
 
 dockerbuild:
-	docker build -t $(CONTAINER) -f Dockerfile.test .
+	docker build -t $(CONTAINER)-build -f Dockerfile.test .
 
 docker: buildstatic
+	@echo "##teamcity[setParameter name='DOCKERVERSION' value='$(VERSION)']"
 	docker build -t $(CONTAINER):$(VERSION) -f Dockerfile.build .
 
 # Ignore vendored dependencies
