@@ -16,6 +16,8 @@ import (
 )
 
 const LOCALSLAVEID = "20160107-001256-134875658-5050-27524-S3"
+const LOCALSLAVENAME = "mesosslave-r02-s02"
+const LOCALSLAVEIP = "127.0.0.1"
 
 func TestNew(t *testing.T) {
 	server, _ := backendSetup(t)
@@ -174,13 +176,13 @@ func TestCleanupRecords(t *testing.T) {
 	validateRecords(t, backend, 6)
 
 	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.2", 0, []string{})
-	err := backend.Agents["127.0.0.1"].ServiceRegister(service)
+	err := backend.Agents[LOCALSLAVENAME].ServiceRegister(service)
 	if err != nil {
 		t.Error("Failed to create bogus service", err)
 	}
 	validateRecords(t, backend, 7)
 
-	slaveid := backend.SlaveIPID["127.0.0.1"]
+	slaveid := backend.SlaveHostnameID[LOCALSLAVENAME]
 	// Add this to previous so when we parse state again,
 	// this will not be present
 	backend.TaskRecords[slaveid].Previous = append(backend.TaskRecords[slaveid].Previous, service)
@@ -194,7 +196,7 @@ func TestCleanupRecords(t *testing.T) {
 		ServiceID:         "mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230",
 		AgentServiceCheck: capi.AgentServiceCheck{TTL: "500s"},
 	}
-	err = backend.Agents["127.0.0.1"].CheckRegister(hc)
+	err = backend.Agents[LOCALSLAVENAME].CheckRegister(hc)
 	if err != nil {
 		t.Error("Failed to create bogus healthcheck", err)
 	}
@@ -236,7 +238,7 @@ func TestCache(t *testing.T) {
 	validateRecords(t, backend, 6)
 
 	// Save us uglyness later
-	slaveid := backend.SlaveIPID["127.0.0.1"]
+	slaveid := backend.SlaveHostnameID[LOCALSLAVENAME]
 
 	// Create new service
 	service := createService(strings.Join([]string{backend.Config.ServicePrefix, "REMOVEMESERVICE"}, ":"), "REMOVEMESERVICE", "127.0.0.1", 0, []string{})
@@ -291,6 +293,7 @@ func makeClientServer(t *testing.T) *testutil.TestServer {
 	// Create server
 	// Redirect logs to /dev/null cause we really dont care about consul agent ouput
 	server := testutil.NewTestServerConfig(t, func(c *testutil.TestServerConfig) {
+		c.NodeName = "mesosslave-r02-s02"
 		c.LogLevel = "ERR"
 		c.Stdout = ioutil.Discard
 		c.Stderr = ioutil.Discard
@@ -325,6 +328,7 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	version := "1.0"
 
 	// Initialize logger
+	//logging.VeryVerboseFlag = true
 	logging.SetupLogs()
 
 	// Create empty RecordGenerator
@@ -356,11 +360,11 @@ func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	// running on the same host as the mesos process
 	for _, slave := range sj.Slaves {
 		if slave.ID == LOCALSLAVEID {
-			slave.PID.Host = "127.0.0.1"
+			slave.PID.Host = LOCALSLAVEIP
 		}
 	}
 	sj.Leader = "master@127.0.0.2:5050"
-	sj.Frameworks[0].PID.Host = "127.0.0.1"
+	sj.Frameworks[0].PID.Host = LOCALSLAVEIP
 	backend.State = sj
 
 	return server, backend
