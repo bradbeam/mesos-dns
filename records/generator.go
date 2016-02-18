@@ -53,11 +53,14 @@ func (rg *RecordGenerator) ParseState(c *Config) error {
 		logging.Error.Println("no master")
 		return err
 	}
+
 	if sj.Leader == "" {
 		logging.Error.Println("Unexpected error")
 		err = errors.New("empty master")
 		return err
 	}
+
+	rg.State = sj
 
 	hostSpec := labels.RFC1123
 	if c.EnforceRFC952 {
