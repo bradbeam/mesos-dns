@@ -51,7 +51,7 @@ func NewConfig() *Config {
 		Domain:              "mesos",
 		IPSources:           []string{"netinfo", "mesos", "host"},
 		RefreshSeconds:      60,
-		Resolvers:           map[string]interface{}{"builtin": nil},
+		Resolvers:           map[string]interface{}{},
 		StateTimeoutSeconds: 300,
 		SOAExpire:           86400,
 		SOAMinttl:           60,
