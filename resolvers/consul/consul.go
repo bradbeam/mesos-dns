@@ -26,6 +26,7 @@ type ConsulBackend struct {
 	SlaveIDIP        map[string]string
 	SlaveIPID        map[string]string
 	SlaveIDHostname  map[string]string
+	SlaveHostnameID  map[string]string
 	State            state.State
 	FrameworkRecords map[string]*ConsulRecords
 	MesosRecords     map[string]*ConsulRecords
@@ -84,6 +85,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		SlaveIDIP:        make(map[string]string),
 		SlaveIPID:        make(map[string]string),
 		SlaveIDHostname:  make(map[string]string),
+		SlaveHostnameID:  make(map[string]string),
 		State:            state.State{},
 		FrameworkRecords: make(map[string]*ConsulRecords),
 		MesosRecords:     make(map[string]*ConsulRecords),
@@ -129,10 +131,12 @@ func (c *ConsulBackend) connectAgents() error {
 	}
 
 	for _, agent := range members {
+		logging.VeryVerbose.Println("Connecting to consul agent", agent)
 		// Test connection to each agent and reconnect as needed
 		if _, ok := c.Agents[agent.Addr]; ok {
 			_, err := c.Agents[agent.Addr].Self()
 			if err == nil {
+				logging.VeryVerbose.Println("Connected to consul agent", agent)
 				continue
 			}
 		}
@@ -155,14 +159,16 @@ func (c *ConsulBackend) connectAgents() error {
 			return err
 		}
 
-		c.Agents[agent.Addr] = client.Agent()
-
+		c.Agents[agent.Name] = client.Agent()
+		logging.VeryVerbose.Println("Connected to consul agent", agent)
 	}
 
 	return nil
 }
 
 func (c *ConsulBackend) generateMesosRecords() {
+	slaves := c.State.Slaves
+
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
@@ -180,7 +186,6 @@ func (c *ConsulBackend) generateMesosRecords() {
 		Active: true,
 	}
 
-	slaves := c.State.Slaves
 	slaves = append(slaves, lead)
 	for _, slave := range slaves {
 		// We'll need this for service registration to the appropriate
@@ -190,6 +195,7 @@ func (c *ConsulBackend) generateMesosRecords() {
 
 		// Pull out only the hostname, not the FQDN
 		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
+		c.SlaveHostnameID[strings.Split(slave.Hostname, ".")[0]] = slave.ID
 
 		tags := []string{"slave", c.SlaveIDHostname[slave.ID]}
 
@@ -315,7 +321,7 @@ func (c *ConsulBackend) Register() {
 
 	for agentid, _ := range c.Agents {
 		// Launch a goroutine per agent
-		slaveid := c.SlaveIPID[agentid]
+		slaveid := c.SlaveHostnameID[agentid]
 		wg.Add(1)
 		go func() {
 			services := []*capi.AgentServiceRegistration{}
@@ -370,7 +376,7 @@ func (c *ConsulBackend) Cleanup() {
 
 	for agentid, _ := range c.Agents {
 		// Launch a goroutine per agent
-		slaveid := c.SlaveIPID[agentid]
+		slaveid := c.SlaveHostnameID[agentid]
 		wg.Add(1)
 		go func() {
 			services := []*capi.AgentServiceRegistration{}

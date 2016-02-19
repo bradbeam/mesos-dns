@@ -51,7 +51,6 @@ func NewConfig() *Config {
 		Domain:              "mesos",
 		IPSources:           []string{"netinfo", "mesos", "host"},
 		RefreshSeconds:      60,
-		Resolvers:           map[string]interface{}{"builtin": nil},
 		StateTimeoutSeconds: 300,
 		SOAExpire:           86400,
 		SOAMinttl:           60,
@@ -78,6 +77,11 @@ func SetConfig(cjson string) *Config {
 
 	if err = validateIPSources(c.IPSources); err != nil {
 		logging.Error.Fatalf("IPSources validation failed: %v", err)
+	}
+
+	// Default to builtin config if none have been specified
+	if c.Resolvers == nil {
+		c.Resolvers = map[string]interface{}{"builtin": nil}
 	}
 
 	c.Domain = strings.ToLower(c.Domain)
@@ -109,8 +113,10 @@ func SetConfig(cjson string) *Config {
 	logging.Verbose.Println("   - Resolvers:")
 	for k, v := range c.Resolvers {
 		logging.Verbose.Printf("     - %s:\n", k)
-		for key, val := range v.(map[string]interface{}) {
-			logging.Verbose.Printf("       - %s:\n%+v\n", key, val)
+		if m, ok := v.(map[string]interface{}); ok {
+			for key, val := range m {
+				logging.Verbose.Printf("       - %s: %+v\n", key, val)
+			}
 		}
 	}
 

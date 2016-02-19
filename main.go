@@ -84,6 +84,7 @@ func main() {
 
 func reloadResolvers(config *records.Config, errch chan error, rs []resolvers.Resolver) {
 	rg := records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
+	rg.Config = config
 	err := rg.ParseState(config)
 
 	if err != nil {

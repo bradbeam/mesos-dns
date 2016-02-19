@@ -143,11 +143,9 @@ func (res *Resolver) Serve(proto string) (<-chan struct{}, <-chan error) {
 // Reload parses the incoming RecordGenerator to modify advertised records
 // This method is not goroutine-safe.
 func (res *Resolver) Reload(rg *records.RecordGenerator) {
-	timestamp := uint32(time.Now().Unix())
 	// may need to refactor for fairness
 	res.rsLock.Lock()
 	defer res.rsLock.Unlock()
-	atomic.StoreUint32(&rg.Config.SOASerial, timestamp)
 	res.rg = rg
 
 	logging.PrintCurLog()

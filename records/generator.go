@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mesosphere/mesos-dns/errorutil"
@@ -53,6 +54,7 @@ func (rg *RecordGenerator) ParseState(c *Config) error {
 		logging.Error.Println("no master")
 		return err
 	}
+
 	if sj.Leader == "" {
 		logging.Error.Println("Unexpected error")
 		err = errors.New("empty master")
@@ -216,6 +218,10 @@ func (rg *RecordGenerator) InsertState(sj state.State, domain string, ns string,
 	rg.slaveRecords(sj, domain, spec)
 	rg.masterRecord(domain, masters, sj.Leader)
 	rg.taskRecords(sj, domain, spec, ipSources)
+	rg.State = sj
+
+	timestamp := uint32(time.Now().Unix())
+	atomic.StoreUint32(&rg.Config.SOASerial, timestamp)
 
 	return nil
 }
