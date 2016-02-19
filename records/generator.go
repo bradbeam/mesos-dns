@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/mesosphere/mesos-dns/errorutil"
@@ -40,16 +39,18 @@ type RecordGenerator struct {
 }
 
 // NewRecordGenerator returns a RecordGenerator that's been configured with a timeout.
-func NewRecordGenerator(httpTimeout time.Duration) *RecordGenerator {
-	rg := &RecordGenerator{httpClient: http.Client{Timeout: httpTimeout}}
+func NewRecordGenerator(config *Config) *RecordGenerator {
+	httpTimeout := time.Duration(config.StateTimeoutSeconds) * time.Second
+	rg := &RecordGenerator{Config: config,
+		httpClient: http.Client{Timeout: httpTimeout}}
 	return rg
 }
 
 // ParseState retrieves and parses the Mesos master /state.json and converts it
 // into DNS records.
-func (rg *RecordGenerator) ParseState(c *Config) error {
+func (rg *RecordGenerator) ParseState() error {
 	// find master -- return if error
-	sj, err := rg.findMaster(c.Masters)
+	sj, err := rg.findMaster(rg.Config.Masters)
 	if err != nil {
 		logging.Error.Println("no master")
 		return err
@@ -62,11 +63,12 @@ func (rg *RecordGenerator) ParseState(c *Config) error {
 	}
 
 	hostSpec := labels.RFC1123
-	if c.EnforceRFC952 {
+	if rg.Config.EnforceRFC952 {
 		hostSpec = labels.RFC952
 	}
 
-	return rg.InsertState(sj, c.Domain, c.SOARname, c.Masters, c.IPSources, hostSpec)
+	return rg.InsertState(sj, rg.Config.Domain, rg.Config.SOARname, rg.Config.Masters,
+		rg.Config.IPSources, hostSpec)
 }
 
 // Tries each master and looks for the leader
@@ -220,8 +222,7 @@ func (rg *RecordGenerator) InsertState(sj state.State, domain string, ns string,
 	rg.taskRecords(sj, domain, spec, ipSources)
 	rg.State = sj
 
-	timestamp := uint32(time.Now().Unix())
-	atomic.StoreUint32(&rg.Config.SOASerial, timestamp)
+	rg.Config.SOASerial = uint32(time.Now().Unix())
 
 	return nil
 }
