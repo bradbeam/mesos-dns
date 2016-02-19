@@ -23,7 +23,7 @@ test: dockerbuild
 testall: fmttest test 
 
 build: dockerbuild
-	docker run --rm -v "$(PWD)/build":/build -e GOOS=$(GOOS) $(CONTAINER) godep go build -ldflags="-X main.Version=$(VERSION)" -o /build/mesos-dns
+	docker run --rm -v "$(PWD)/build":/build -e GOOS=$(GOOS) $(CONTAINER)-build godep go build -ldflags="-X main.Version=$(VERSION)" -o /build/mesos-dns
 	
 buildstatic: dockerbuild
-	docker run --rm -v "$(PWD)/build":/build -e CGO_ENABLED=0 -e GOOS=$(GOOS) $(CONTAINER) godep go build -a -installsuffix cgo -ldflags "-s -X main.Version=$(VERSION)" -o /build/mesos-dns
+	docker run --rm -v "$(PWD)/build":/build -e CGO_ENABLED=0 -e GOOS=$(GOOS) $(CONTAINER)-build godep go build -a -installsuffix cgo -ldflags "-s -X main.Version=$(VERSION)" -o /build/mesos-dns
