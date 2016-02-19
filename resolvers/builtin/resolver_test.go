@@ -13,7 +13,6 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/kylelemons/godebug/pretty"
 	. "github.com/mesosphere/mesos-dns/dnstest"
@@ -318,8 +317,7 @@ func fakeDNS() (*Resolver, error) {
 	config := NewConfig()
 	config.RecurseOn = false
 
-	rg := records.NewRecordGenerator(time.Duration(c.StateTimeoutSeconds) * time.Second)
-	rg.Config = c
+	rg := records.NewRecordGenerator(c)
 
 	testch := make(chan error)
 	res := New(config, testch, rg, "0.1.1")
@@ -341,6 +339,10 @@ func fakeDNS() (*Resolver, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Although timestamp matching is possible, let's keep this generic
+	res.rg.Config.SOASerial = uint32(0)
+
 	return res, nil
 }
 

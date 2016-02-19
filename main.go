@@ -51,8 +51,7 @@ func main() {
 	})
 
 	// initialize a RecordGenerator for use by initializing resolvers
-	rg := records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
-	rg.Config = config
+	rg := records.NewRecordGenerator(config)
 
 	// initialize backends
 	changed := detectMasters(config.Zk, config.Masters)
@@ -83,9 +82,8 @@ func main() {
 }
 
 func reloadResolvers(config *records.Config, errch chan error, rs []resolvers.Resolver) {
-	rg := records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
-	rg.Config = config
-	err := rg.ParseState(config)
+	rg := records.NewRecordGenerator(config)
+	err := rg.ParseState()
 
 	if err != nil {
 		logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)

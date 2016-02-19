@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/testutil"
@@ -332,8 +331,9 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	logging.SetupLogs()
 
 	// Create empty RecordGenerator
-	rg := records.NewRecordGenerator(time.Duration(300) * time.Second)
-	rg.Config = records.NewConfig()
+	conf := records.NewConfig()
+	conf.StateTimeoutSeconds = 300
+	rg := records.NewRecordGenerator(conf)
 
 	// Hopefully the ENV vars above should allow us
 	// to override the defaults

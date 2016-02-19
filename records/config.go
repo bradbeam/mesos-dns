@@ -58,6 +58,7 @@ func NewConfig() *Config {
 		SOARefresh:          60,
 		SOARetry:            600,
 		SOARname:            "root.ns1.mesos",
+		SOASerial:           uint32(time.Now().Unix()),
 		ZkDetectionTimeout:  30,
 	}
 }
@@ -89,7 +90,6 @@ func SetConfig(cjson string) *Config {
 	// SOA record fields
 	c.SOARname = strings.TrimRight(strings.Replace(c.SOARname, "@", ".", -1), ".") + "."
 	c.SOAMname = strings.TrimRight(c.SOAMname, ".") + "."
-	c.SOASerial = uint32(time.Now().Unix())
 
 	// print the configuration file
 	logging.Verbose.Println("Mesos-DNS configuration:")

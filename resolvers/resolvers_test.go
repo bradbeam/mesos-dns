@@ -59,7 +59,7 @@ func CreateResolvers(config *records.Config) error {
 	errch := make(chan error)
 	version := "test"
 
-	rg := records.NewRecordGenerator(time.Duration(config.StateTimeoutSeconds) * time.Second)
+	rg := records.NewRecordGenerator(config)
 	rg.Config = config
 
 	// Initialization errors should show in well under 10 seconds
