@@ -117,8 +117,6 @@ func (rg *RecordGenerator) findMaster(masters []string) (state.State, error) {
 
 	}
 
-	rg.State = sj
-
 	return sj, errors.New("no master")
 }
 
