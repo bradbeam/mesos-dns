@@ -384,10 +384,8 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 			for k, info := range services {
 				t.Error(" -", k, "=>", info.Address)
 			}
-
 		}
 	}
-
 }
 
 func validateChecks(t *testing.T, backend *ConsulBackend, expected int) {
@@ -403,7 +401,6 @@ func validateChecks(t *testing.T, backend *ConsulBackend, expected int) {
 			for k, info := range checks {
 				t.Error(" -", k, "=>", info.ServiceID)
 			}
-
 		}
 	}
 }
@@ -438,7 +435,17 @@ func validateHealthRecords(t *testing.T, records map[string]*ConsulChecks, expec
 		for _, hc := range records[LOCALSLAVEID].Current {
 			t.Error(" -", hc.ServiceID)
 		}
+		return
 	}
+
+	for _, info := range records[LOCALSLAVEID].Current {
+		if info.Name == "nginx/port" {
+			if info.AgentServiceCheck.TCP != "127.0.0.1:80" {
+				t.Errorf("IP Substitution did not work %+v", info)
+			}
+		}
+	}
+
 }
 
 func setupHealthChecks(t *testing.T, backend *ConsulBackend) {
@@ -450,7 +457,7 @@ func setupHealthChecks(t *testing.T, backend *ConsulBackend) {
 		ID:   "nginx/port",
 		Name: "nginx/port",
 		AgentServiceCheck: capi.AgentServiceCheck{
-			TCP:      "localhost:80",
+			TCP:      "{IP}:80",
 			Interval: "5s",
 		},
 	}
