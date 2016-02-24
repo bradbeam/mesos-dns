@@ -3,6 +3,7 @@ package consul
 import (
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,7 @@ type ConsulBackend struct {
 	Client           *capi.Client
 	Config           *Config
 	Count            int
-	LookupOrder      []string
+	IPSources        []string
 	Refresh          int
 	ServicePrefix    string
 	SlaveIDIP        map[string]string
@@ -79,7 +80,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		Client:           client,
 		Config:           config,
 		Count:            0,
-		LookupOrder:      []string{"docker", "netinfo", "host"},
+		IPSources:        rg.Config.IPSources,
 		Refresh:          rg.Config.RefreshSeconds,
 		ServicePrefix:    "mesos-dns",
 		SlaveIDIP:        make(map[string]string),
@@ -454,7 +455,7 @@ func (c *ConsulBackend) Cleanup() {
 func (c *ConsulBackend) getAddress(task state.Task) string {
 
 	var address string
-	for _, lookup := range c.LookupOrder {
+	for _, lookup := range c.IPSources {
 		lookupkey := strings.Split(lookup, ":")
 		switch lookupkey[0] {
 		case "mesos":
@@ -560,9 +561,18 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 }
 
 func createService(id string, name string, address string, port int, tags []string) *capi.AgentServiceRegistration {
+	// Format the name appropriately
+	reg, err := regexp.Compile("[^\\w-]")
+	if err != nil {
+		logging.Error.Println(err)
+		return &capi.AgentServiceRegistration{}
+	}
+
+	s := reg.ReplaceAllString(name, "-")
+
 	asr := &capi.AgentServiceRegistration{
 		ID:      id,
-		Name:    name,
+		Name:    strings.ToLower(strings.Replace(s, "_", "", -1)),
 		Address: address,
 		Tags:    tags,
 	}
