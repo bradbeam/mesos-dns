@@ -3,6 +3,7 @@ package records
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 func validateEnabledServices(c *Config) error {
@@ -48,8 +49,9 @@ func validateIPSources(srcs []string) error {
 		return fmt.Errorf("duplicate ip source specified")
 	}
 	for _, src := range srcs {
-		switch src {
-		case "host", "docker", "mesos", "netinfo":
+		source := strings.Split(src, ":")
+		switch source[0] {
+		case "host", "docker", "mesos", "netinfo", "label":
 		default:
 			return fmt.Errorf("invalid ip source %q", src)
 		}
