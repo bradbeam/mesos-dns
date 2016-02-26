@@ -73,6 +73,14 @@ func TestFrameworkRecords(t *testing.T) {
 
 	// 1 record ( marathon )
 	validateStateRecords(t, backend.FrameworkRecords, 1, expected)
+
+	// Set up test for inactive framework
+	backend.State.Frameworks[0].Active = false
+	backend.FrameworkRecords = make(map[string]*ConsulRecords)
+	backend.generateFrameworkRecords()
+	expected[LOCALSLAVEID] = 0
+
+	validateStateRecords(t, backend.FrameworkRecords, 0, expected)
 }
 
 func TestTaskRecords(t *testing.T) {
