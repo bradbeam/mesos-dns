@@ -291,7 +291,7 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 			// Create a service registration for the base service
 			id := strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID}, ":")
 			c.TaskRecords[task.SlaveID].Current = append(c.TaskRecords[task.SlaveID].Current, createService(id, task.Name, address, 0, []string{c.SlaveIDHostname[task.SlaveID]}))
-			c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id)...)
+			c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id, address, 0)...)
 		} else {
 			// Create a service registration for each port
 			for _, port := range task.Ports() {
@@ -302,7 +302,7 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 				}
 				id := strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":")
 				c.TaskRecords[task.SlaveID].Current = append(c.TaskRecords[task.SlaveID].Current, createService(id, task.Name, address, p, []string{c.SlaveIDHostname[task.SlaveID]}))
-				c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id)...)
+				c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id, address, p)...)
 			}
 		}
 		for _, rec := range c.TaskRecords[task.SlaveID].Current {
@@ -489,7 +489,7 @@ func (c *ConsulBackend) getAddress(task state.Task) string {
 	return address
 }
 
-func (c *ConsulBackend) getHealthChecks(task state.Task, id string) []*capi.AgentCheckRegistration {
+func (c *ConsulBackend) getHealthChecks(task state.Task, id string, address string, port int) []*capi.AgentCheckRegistration {
 	// Look up KV for defined healthchecks
 	kv := c.Client.KV()
 	var hc []*capi.AgentCheckRegistration
@@ -512,6 +512,27 @@ func (c *ConsulBackend) getHealthChecks(task state.Task, id string) []*capi.Agen
 			}
 			check.ID = strings.Join([]string{check.ID, id}, ":")
 			check.ServiceID = id
+
+			// Now to do some variable expansion
+			// We're going to reserve `{IP}` and `{PORT}`
+			// We'll apply this to
+			// http, script, tcp
+			if check.HTTP != "" {
+				if !evalVars(&check.HTTP, address, port) {
+					continue
+				}
+			}
+			if check.Script != "" {
+				if !evalVars(&check.Script, address, port) {
+					continue
+				}
+			}
+			if check.TCP != "" {
+				if !evalVars(&check.TCP, address, port) {
+					continue
+				}
+			}
+
 			hc = append(hc, check)
 		}
 	}
@@ -665,4 +686,14 @@ func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.
 		}
 	}
 	return delta
+}
+
+func evalVars(check *string, address string, port int) bool {
+	if strings.Contains(*check, "{PORT}") && port == 0 {
+		logging.Error.Println("Invalid port for substitution in healthcheck", *check, port)
+		return false
+	}
+	*check = strings.Replace(*check, "{IP}", address, -1)
+	*check = strings.Replace(*check, "{PORT}", strconv.Itoa(port), -1)
+	return true
 }
