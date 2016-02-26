@@ -230,6 +230,10 @@ func (c *ConsulBackend) generateMesosRecords() {
 
 func (c *ConsulBackend) generateFrameworkRecords() {
 	for _, framework := range c.State.Frameworks {
+		// Skip inactive frameworks
+		if !framework.Active {
+			continue
+		}
 
 		// task, pid, name, hostname
 		port, err := strconv.Atoi(framework.PID.Port)
