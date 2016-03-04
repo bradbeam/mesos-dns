@@ -168,27 +168,18 @@ func (c *ConsulBackend) connectAgents() error {
 }
 
 func (c *ConsulBackend) generateMesosRecords() {
-	slaves := c.State.Slaves
-
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
-		ID:       c.State.Leader,
-		Hostname: c.State.Leader,
 		PID: state.PID{
 			&upid.UPID{
 				Host: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[0],
 				Port: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[1],
 			},
 		},
-		Attrs: state.Attributes{
-			Master: "true",
-		},
-		Active: true,
 	}
 
-	slaves = append(slaves, lead)
-	for _, slave := range slaves {
+	for _, slave := range c.State.Slaves {
 		// We'll need this for service registration to the appropriate
 		// slaves
 		c.SlaveIDIP[slave.ID] = slave.PID.Host
@@ -203,7 +194,8 @@ func (c *ConsulBackend) generateMesosRecords() {
 		if slave.Attrs.Master == "true" {
 			tags = append(tags, "master")
 		}
-		if slave.ID == lead.ID {
+
+		if slave.PID.Host == lead.PID.Host {
 			tags = append(tags, "leader")
 		}
 
@@ -327,6 +319,7 @@ func (c *ConsulBackend) Register() {
 	for agentid, _ := range c.Agents {
 		// Launch a goroutine per agent
 		slaveid := c.SlaveHostnameID[agentid]
+
 		wg.Add(1)
 		go func() {
 			services := []*capi.AgentServiceRegistration{}
