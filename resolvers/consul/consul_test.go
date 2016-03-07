@@ -54,11 +54,10 @@ func TestMesosRecords(t *testing.T) {
 		"20160107-001256-134875658-5050-27524-S1":  1,
 		"20160107-001256-134875658-5050-27524-S2":  1,
 		"20160107-001256-134875658-5050-27524-S0":  1,
-		"master@127.0.0.2:5050":                    1,
 	}
 
 	// 6 records ( 5x slaves, 1x leader )
-	validateStateRecords(t, backend.MesosRecords, 6, expected)
+	validateStateRecords(t, backend.MesosRecords, 5, expected)
 }
 
 func TestFrameworkRecords(t *testing.T) {
@@ -170,6 +169,7 @@ func TestRegister(t *testing.T) {
 
 	// 6 Records ( 2x myapp, 1x nginx, 1x marathon, 1x slave, 1x consul )
 	validateRecords(t, backend, 6)
+
 }
 
 func TestCleanupRecords(t *testing.T) {
@@ -371,7 +371,7 @@ func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 			slave.PID.Host = LOCALSLAVEIP
 		}
 	}
-	sj.Leader = "master@127.0.0.2:5050"
+	sj.Leader = strings.Join([]string{"master@", LOCALSLAVEIP, ":5050"}, "")
 	sj.Frameworks[0].PID.Host = LOCALSLAVEIP
 	backend.State = sj
 
@@ -392,6 +392,17 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 			for k, info := range services {
 				t.Error(" -", k, "=>", info.Address)
 			}
+		}
+
+		// Test local agent for leader.mesos record
+		leader := false
+		for _, tag := range services[strings.Join([]string{"mesos-dns", LOCALSLAVEID}, ":")].Tags {
+			if tag == "leader" {
+				leader = true
+			}
+		}
+		if !leader {
+			t.Error("leader tag not applied to local slave")
 		}
 	}
 }
