@@ -135,7 +135,7 @@ func TestHealthchecks(t *testing.T) {
 	// 5 Records ( 5x slaves )
 	validateStateRecords(t, backend.TaskRecords, 5, expected)
 	// 2 healthchecks
-	validateHealthRecords(t, backend.HealthChecks, 2)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Current, 2)
 }
 
 func TestRegister(t *testing.T) {
@@ -181,6 +181,7 @@ func TestCleanupRecords(t *testing.T) {
 	rg := &records.RecordGenerator{State: backend.State}
 	backend.Reload(rg)
 	validateRecords(t, backend, 6)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
 
 	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.2", 0, []string{})
 	err := backend.Agents[LOCALSLAVENAME].ServiceRegister(service)
@@ -210,23 +211,33 @@ func TestCleanupRecords(t *testing.T) {
 
 	backend.HealthChecks[slaveid].Previous = append(backend.HealthChecks[slaveid].Previous, hc)
 	backend.Reload(rg)
-	/*
-		expectedhc := map[string]int{
-			"mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
-			"mesos-dns:mesosmaster-r01-s01:myapp.98e56ea4-b4d3-11e5-b2bb-0242d4d0a230:31384": 0,
-			"mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
-			"mesos-dns:mesosmaster-r02-s02:myapp.98e40f12-b4d3-11e5-b2bb-0242d4d0a230:31384"] = 0
-			"mesos-dns:mesosslave-r01-s01:nginx-no-net.215c789f-c611-11e5-aca8-0242965d2034:31477": 0,
-			"mesos-dns:mesosslave-r01-s01:nginx-host-net.7a43b7d6-c611-11e5-aca8-0242965d2034:31423": 0,
-			"mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230": 2,
-			"mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
-			"mesos-dns:mesosslave-r02-s02:myapp.98e65905-b4d3-11e5-b2bb-0242d4d0a230:31384": 0,
-			"mesos-dns:mesosmaster-r03-s03:nginx.2a8898a8-b9a7-11e5-b2bb-0242d4d0a230:31381": 0,
-			"mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31383": 0,
-			"mesos-dns:mesosmaster-r03-s03:myapp.98de90d1-b4d3-11e5-b2bb-0242d4d0a230:31384": 0,
-		}
-		validateHealthRecords(t, backend.HealthChecks, expectedhc)
-	*/
+
+	// Need to do some sort of validation for ^
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
+
+	// Test for updating existing HC
+	kv := backend.Client.KV()
+	nport := &capi.AgentCheckRegistration{
+		ID:   "nginx/port",
+		Name: "nginx/port",
+		AgentServiceCheck: capi.AgentServiceCheck{
+			TCP:      "{IP}:800",
+			Interval: "5s",
+		},
+	}
+	b, err := json.Marshal(nport)
+	p := &capi.KVPair{Key: "healthchecks/" + nport.ID, Value: b}
+	_, err = kv.Put(p, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	//err = backend.Agents[LOCALSLAVENAME].CheckRegister(nport)
+	//t.Log(backend.Agents[LOCALSLAVENAME].Health().Checks("nginx-no-port", nil))
+	backend.Reload(rg)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
+	backend.Reload(rg)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
 }
 
 func TestCache(t *testing.T) {
@@ -269,7 +280,7 @@ func TestCache(t *testing.T) {
 	backend.HealthChecks[slaveid].Current = append(backend.HealthChecks[slaveid].Current, hc)
 
 	// Compare
-	deltachecks := getDeltaChecks(backend.HealthChecks[slaveid].Previous, backend.HealthChecks[slaveid].Current)
+	deltachecks := getDeltaChecks(backend.HealthChecks[slaveid].Previous, backend.HealthChecks[slaveid].Current, "add")
 	if len(deltachecks) != 1 {
 		t.Error("Did not get back additional healthcheck registration. Expected 1 received", len(deltachecks))
 	}
@@ -448,18 +459,18 @@ func validateStateRecords(t *testing.T, records map[string]*ConsulRecords, expec
 	}
 }
 
-func validateHealthRecords(t *testing.T, records map[string]*ConsulChecks, expected int) {
-	if len(records[LOCALSLAVEID].Current) != expected {
-		t.Error("Did not get back", expected, "healthcheck records. Got back", len(records[LOCALSLAVEID].Current))
-		for _, hc := range records[LOCALSLAVEID].Current {
+func validateHealthRecords(t *testing.T, records []*capi.AgentCheckRegistration, expected int) {
+	if len(records) != expected {
+		t.Error("Did not get back", expected, "healthcheck records. Got back", len(records))
+		for _, hc := range records {
 			t.Error(" -", hc.ServiceID)
 		}
 		return
 	}
 
-	for _, info := range records[LOCALSLAVEID].Current {
+	for _, info := range records {
 		if info.Name == "nginx/port" {
-			if info.AgentServiceCheck.TCP != "127.0.0.1:80" {
+			if strings.Split(info.AgentServiceCheck.TCP, ":")[0] != "127.0.0.1" {
 				t.Errorf("IP Substitution did not work %+v", info)
 			}
 		}

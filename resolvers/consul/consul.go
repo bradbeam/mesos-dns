@@ -351,7 +351,7 @@ func (c *ConsulBackend) Register() {
 
 			checks := []*capi.AgentCheckRegistration{}
 			if _, ok := c.HealthChecks[slaveid]; ok {
-				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Previous, c.HealthChecks[slaveid].Current)...)
+				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Previous, c.HealthChecks[slaveid].Current, "add")...)
 			}
 
 			for _, hc := range checks {
@@ -421,7 +421,7 @@ func (c *ConsulBackend) Cleanup() {
 			}
 			checks := []*capi.AgentCheckRegistration{}
 			if _, ok := c.HealthChecks[slaveid]; ok {
-				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Current, c.HealthChecks[slaveid].Previous)...)
+				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Current, c.HealthChecks[slaveid].Previous, "purge")...)
 				c.HealthChecks[slaveid].Previous = c.HealthChecks[slaveid].Current
 				c.HealthChecks[slaveid].Current = nil
 			}
@@ -668,7 +668,7 @@ func getDeltaServices(oldservices []*capi.AgentServiceRegistration, newservices 
 	return delta
 }
 
-func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.AgentCheckRegistration) []*capi.AgentCheckRegistration {
+func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.AgentCheckRegistration, context string) []*capi.AgentCheckRegistration {
 	delta := []*capi.AgentCheckRegistration{}
 	for _, newhc := range newchecks {
 		found := false
@@ -676,6 +676,18 @@ func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.
 			if compareCheck(newhc, oldhc) {
 				found = true
 				break
+			}
+			// We add this context key in here to know how to react to IDs that are the same
+			// In a registration/add case, we want to update the healthcheck if it is different
+			// even if it uses the same ID
+			// In a deregistration/purge case, we want to leave the healthcheck alone if the IDs are
+			// the same but the content differs. This is so we don't remove a newly updated healthcheck
+			// that uses the same ID as the old one
+			if context == "purge" {
+				if newhc.ID == oldhc.ID {
+					found = true
+					break
+				}
 			}
 		}
 		if !found {
