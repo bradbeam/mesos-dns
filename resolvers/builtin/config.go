@@ -30,21 +30,24 @@ type Config struct {
 	Timeout int
 	// TTL: the TTL value used for SRV and A records (default 60)
 	TTL int32
+	// Enumeration enabled via the API enumeration endpoint
+	EnumerationOn bool
 }
 
 // NewConfig return the default config of the resolver
 func NewConfig() *Config {
 	return &Config{
-		DNSOn:       true,
-		ExternalOn:  true,
-		HTTPOn:      true,
-		HTTPPort:    8123,
-		Listener:    "0.0.0.0",
-		Port:        53,
-		RecurseOn:   true,
-		ExternalDNS: []string{"8.8.8.8"},
-		Timeout:     5,
-		TTL:         60,
+		DNSOn:         true,
+		ExternalOn:    true,
+		HTTPOn:        true,
+		HTTPPort:      8123,
+		Listener:      "0.0.0.0",
+		Port:          53,
+		RecurseOn:     true,
+		ExternalDNS:   []string{"8.8.8.8"},
+		Timeout:       5,
+		TTL:           60,
+		EnumerationOn: true,
 	}
 }
 

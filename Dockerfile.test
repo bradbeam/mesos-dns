@@ -1,7 +1,7 @@
 FROM docker-registry.core.rcsops.com/godep:1.1.0
 
 # Need consul in $PATH so we can do consul tests
-RUN go get github.com/hashicorp/consul
+RUN git clone -b v0.6.4 https://github.com/hashicorp/consul.git "$GOPATH/src/github.com/hashicorp/consul"
 
 COPY ./ "$GOPATH/src/github.com/mesosphere/mesos-dns"
 

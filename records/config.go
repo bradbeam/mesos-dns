@@ -119,7 +119,6 @@ func SetConfig(cjson string) *Config {
 			}
 		}
 	}
-
 	return c
 }
 
