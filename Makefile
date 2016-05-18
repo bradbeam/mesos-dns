@@ -10,10 +10,10 @@ clean:
 	docker rmi $(CONTAINER) || true
 
 dockerbuild:
-	docker build -t $(CONTAINER)-build -f Dockerfile.test .
+	docker build --no-cache -t $(CONTAINER)-build -f Dockerfile.test .
 
 docker: buildstatic
-	docker build -t $(CONTAINER):$(VERSION) -f Dockerfile.build .
+	docker build --no-cache -t $(CONTAINER):$(VERSION) -f Dockerfile.build .
 
 # Ignore vendored dependencies
 # Return 1 if any files found that haven't been formatted

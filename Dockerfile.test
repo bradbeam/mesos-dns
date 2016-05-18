@@ -1,11 +1,14 @@
-FROM docker-registry.core.rcsops.com/godep:1.1.0
+FROM golang:1.6
 
-# Need consul in $PATH so we can do consul tests
-RUN git clone -b v0.6.4 https://github.com/hashicorp/consul.git "$GOPATH/src/github.com/hashicorp/consul"
+RUN go get -u github.com/tools/godep
+RUN go get -u github.com/golang/lint/golint
 
 COPY ./ "$GOPATH/src/github.com/mesosphere/mesos-dns"
 
 # Only update dependencies if we are not using godep
 RUN cd "$GOPATH/src/github.com/mesosphere/mesos-dns" && ( test -d ./Godeps || echo go get -u )
+
+# Install consul for tests
+RUN go get -u github.com/hashicorp/consul
 
 WORKDIR "$GOPATH/src/github.com/mesosphere/mesos-dns"
