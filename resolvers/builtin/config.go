@@ -17,6 +17,8 @@ type Config struct {
 	// NOTE(tsenart): HTTPPort, DNSOn and HTTPOn have defined JSON keys for
 	// backwards compatibility with external API clients.
 	HTTPPort int `json:"HttpPort"`
+	// HTTPListen is the server HTTP listener IP address
+	HTTPListener string
 	// ListenAddr is the server listener address
 	Listener string
 	// Resolver port: port used to listen for slave requests (default 53)
@@ -41,6 +43,7 @@ func NewConfig() *Config {
 		ExternalOn:    true,
 		HTTPOn:        true,
 		HTTPPort:      8123,
+		HTTPListener:  "0.0.0.0",
 		Listener:      "0.0.0.0",
 		Port:          53,
 		RecurseOn:     true,
