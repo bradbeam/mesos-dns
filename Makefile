@@ -5,20 +5,24 @@ CONTAINER=mesos-dns
 version:
 	@echo "##teamcity[setParameter name='env.DOCKER_TAG' value='$(VERSION)']"
 
+clean:
+	docker rmi $(CONTAINER)-build || true
+	docker rmi $(CONTAINER) || true
+
 dockerbuild:
-	docker build -t $(CONTAINER)-build -f Dockerfile.test .
+	docker build --no-cache -t $(CONTAINER)-build -f Dockerfile.test .
 
 docker: buildstatic
-	docker build -t $(CONTAINER):$(VERSION) -f Dockerfile.build .
+	docker build --no-cache -t $(CONTAINER):$(VERSION) -f Dockerfile.build .
 
 # Ignore vendored dependencies
 # Return 1 if any files found that haven't been formatted
 fmttest: dockerbuild
-	docker run --rm $(CONTAINER) gofmt -l . | awk '!/^Godep/ { print $0; err=1 }; END{ exit err }'
+	docker run --rm $(CONTAINER)-build gofmt -l . | awk '!/^Godep/ { print $0; err=1 }; END{ exit err }'
 
 test: dockerbuild
-	docker run --rm $(CONTAINER) godep go test -v ./...
-	docker run --rm $(CONTAINER) godep go test -v -short -race ./...
+	docker run --rm $(CONTAINER)-build godep go test -v ./...
+	docker run --rm $(CONTAINER)-build godep go test -v -short -race ./...
 
 testall: fmttest test 
 

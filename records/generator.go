@@ -25,7 +25,53 @@ import (
 // Map host/service name to DNS answer
 // REFACTOR - when discoveryinfo is integrated
 // Will likely become map[string][]discoveryinfo
-type rrs map[string][]string
+type rrs map[string]map[string]struct{}
+
+func (r rrs) add(name, host string) bool {
+	if host == "" {
+		return false
+	}
+	v, ok := r[name]
+	if !ok {
+		v = make(map[string]struct{})
+		r[name] = v
+	} else {
+		// don't overwrite existing values
+		_, ok = v[host]
+		if ok {
+			return false
+		}
+	}
+	v[host] = struct{}{}
+	return true
+}
+
+func (r rrs) First(name string) (string, bool) {
+	for host := range r[name] {
+		return host, true
+	}
+	return "", false
+}
+
+type rrsKind string
+
+const (
+	// A record types
+	A rrsKind = "A"
+	// SRV record types
+	SRV = "SRV"
+)
+
+func (kind rrsKind) rrs(rg *RecordGenerator) rrs {
+	switch kind {
+	case A:
+		return rg.As
+	case SRV:
+		return rg.SRVs
+	default:
+		return nil
+	}
+}
 
 // RecordGenerator contains DNS records and methods to access and manipulate
 // them. TODO(kozyraki): Refactor when discovery id is available.
@@ -35,7 +81,34 @@ type RecordGenerator struct {
 	SRVs       rrs
 	State      state.State
 	SlaveIPs   map[string]string
+	EnumData   EnumerationData
 	httpClient http.Client
+}
+
+// EnumerableRecord is the lowest level object, and should map 1:1 with DNS records
+type EnumerableRecord struct {
+	Name  string `json:"name"`
+	Host  string `json:"host"`
+	Rtype string `json:"rtype"`
+}
+
+// EnumerableTask consists of the records derived from a task
+type EnumerableTask struct {
+	Name    string             `json:"name"`
+	ID      string             `json:"id"`
+	Records []EnumerableRecord `json:"records"`
+}
+
+// EnumerableFramework is consistent of enumerable tasks, and include the name of the framework
+type EnumerableFramework struct {
+	Tasks []*EnumerableTask `json:"tasks"`
+	Name  string            `json:"name"`
+}
+
+// EnumerationData is the top level container pointing to the
+// enumerable frameworks containing enumerable tasks
+type EnumerationData struct {
+	Frameworks []*EnumerableFramework `json:"frameworks"`
 }
 
 // NewRecordGenerator returns a RecordGenerator that's been configured with a timeout.
@@ -234,10 +307,10 @@ func (rg *RecordGenerator) frameworkRecords(sj state.State, domain string, spec 
 		host, port := f.HostPort()
 		if address, ok := hostToIP4(host); ok {
 			a := fname + "." + domain + "."
-			rg.insertRR(a, address, "A")
+			rg.insertRR(a, address, A)
 			if port != "" {
-				srv := net.JoinHostPort(a, port)
-				rg.insertRR("_framework._tcp."+a, srv, "SRV")
+				srvAddress := net.JoinHostPort(a, port)
+				rg.insertRR("_framework._tcp."+a, srvAddress, SRV)
 			}
 		}
 	}
@@ -251,9 +324,9 @@ func (rg *RecordGenerator) slaveRecords(sj state.State, domain string, spec labe
 		address, ok := hostToIP4(slave.PID.Host)
 		if ok {
 			a := "slave." + domain + "."
-			rg.insertRR(a, address, "A")
+			rg.insertRR(a, address, A)
 			srv := net.JoinHostPort(a, slave.PID.Port)
-			rg.insertRR("_slave._tcp."+domain+".", srv, "SRV")
+			rg.insertRR("_slave._tcp."+domain+".", srv, SRV)
 		} else {
 			logging.VeryVerbose.Printf("string '%q' for slave with id %q is not a valid IP address", address, slave.ID)
 			address = labels.DomainFrag(address, labels.Sep, spec)
@@ -303,16 +376,16 @@ func (rg *RecordGenerator) masterRecord(domain string, masters []string, leader 
 		return
 	}
 	arec := "leader." + domain + "."
-	rg.insertRR(arec, ip, "A")
+	rg.insertRR(arec, ip, A)
 	arec = "master." + domain + "."
-	rg.insertRR(arec, ip, "A")
+	rg.insertRR(arec, ip, A)
 
 	// SRV records
 	tcp := "_leader._tcp." + domain + "."
 	udp := "_leader._udp." + domain + "."
 	host := "leader." + domain + "." + ":" + port
-	rg.insertRR(tcp, host, "SRV")
-	rg.insertRR(udp, host, "SRV")
+	rg.insertRR(tcp, host, SRV)
+	rg.insertRR(udp, host, SRV)
 
 	// if there is a list of masters, insert that as well
 	addedLeaderMasterN := false
@@ -327,7 +400,7 @@ func (rg *RecordGenerator) masterRecord(domain string, masters []string, leader 
 		// A records (master and masterN)
 		if master != leaderAddress {
 			arec := "master." + domain + "."
-			added := rg.insertRR(arec, masterIP, "A")
+			added := rg.insertRR(arec, masterIP, A)
 			if !added {
 				// duplicate master?!
 				continue
@@ -340,7 +413,7 @@ func (rg *RecordGenerator) masterRecord(domain string, masters []string, leader 
 		}
 
 		arec := "master" + strconv.Itoa(idx) + "." + domain + "."
-		rg.insertRR(arec, masterIP, "A")
+		rg.insertRR(arec, masterIP, A)
 		idx++
 
 		if master == leaderAddress {
@@ -354,7 +427,7 @@ func (rg *RecordGenerator) masterRecord(domain string, masters []string, leader 
 			logging.Error.Printf("warning: leader %q is not in master list %q", leader, masters)
 		}
 		arec = "master" + strconv.Itoa(idx) + "." + domain + "."
-		rg.insertRR(arec, ip, "A")
+		rg.insertRR(arec, ip, A)
 	}
 }
 
@@ -363,85 +436,117 @@ func (rg *RecordGenerator) listenerRecord(listener string, ns string) {
 	if listener == "0.0.0.0" {
 		rg.setFromLocal(listener, ns)
 	} else if listener == "127.0.0.1" {
-		rg.insertRR(ns, "127.0.0.1", "A")
+		rg.insertRR(ns, "127.0.0.1", A)
 	} else {
-		rg.insertRR(ns, listener, "A")
+		rg.insertRR(ns, listener, A)
 	}
 }
 
 func (rg *RecordGenerator) taskRecords(sj state.State, domain string, spec labels.Func, ipSources []string) {
 	for _, f := range sj.Frameworks {
-		fname := labels.DomainFrag(f.Name, labels.Sep, spec)
+		enumerableFramework := &EnumerableFramework{Name: f.Name}
+		rg.EnumData.Frameworks = append(rg.EnumData.Frameworks, enumerableFramework)
 
-		// insert taks records
-		tail := "." + domain + "."
 		for _, task := range f.Tasks {
 			var ok bool
 			task.SlaveIP, ok = rg.SlaveIPs[task.SlaveID]
 
-			// skip not running or not discoverable tasks
-			if !ok || (task.State != "TASK_RUNNING") {
-				continue
-			}
-
-			// define context
-			ctx := struct{ taskName, taskID, slaveID, taskIP, slaveIP string }{
-				spec(task.Name),
-				hashString(task.ID),
-				slaveIDTail(task.SlaveID),
-				task.IP(ipSources...),
-				task.SlaveIP,
-			}
-
-			// use DiscoveryInfo name if defined instead of task name
-			if task.HasDiscoveryInfo() {
-				ctx.taskName = task.DiscoveryInfo.Name
-			}
-
-			// insert canonical A records
-			canonical := ctx.taskName + "-" + ctx.taskID + "-" + ctx.slaveID + "." + fname
-			arec := ctx.taskName + "." + fname
-
-			rg.insertRR(arec+tail, ctx.taskIP, "A")
-			rg.insertRR(canonical+tail, ctx.taskIP, "A")
-
-			rg.insertRR(arec+".slave"+tail, ctx.slaveIP, "A")
-			rg.insertRR(canonical+".slave"+tail, ctx.slaveIP, "A")
-
-			// Add RFC 2782 SRV records
-			slaveHost := canonical + ".slave" + tail
-			tcpName := "_" + ctx.taskName + "._tcp." + fname
-			udpName := "_" + ctx.taskName + "._udp." + fname
-			for _, port := range task.Ports() {
-				slaveTarget := slaveHost + ":" + port
-
-				if !task.HasDiscoveryInfo() {
-					rg.insertRR(tcpName+tail, slaveTarget, "SRV")
-					rg.insertRR(udpName+tail, slaveTarget, "SRV")
-				}
-
-				rg.insertRR(tcpName+".slave"+tail, slaveTarget, "SRV")
-				rg.insertRR(udpName+".slave"+tail, slaveTarget, "SRV")
-			}
-
-			if !task.HasDiscoveryInfo() {
-				continue
-			}
-
-			for _, port := range task.DiscoveryInfo.Ports.DiscoveryPorts {
-				target := canonical + tail + ":" + strconv.Itoa(port.Number)
-
-				// use protocol if defined, fallback to tcp+udp
-				proto := spec(port.Protocol)
-				if proto != "" {
-					name := "_" + ctx.taskName + "._" + proto + "." + fname
-					rg.insertRR(name+tail, target, "SRV")
-				} else {
-					rg.insertRR(tcpName+tail, target, "SRV")
-					rg.insertRR(udpName+tail, target, "SRV")
-				}
+			// only do running and discoverable tasks
+			if ok && (task.State == "TASK_RUNNING") {
+				rg.taskRecord(task, f, domain, spec, ipSources, enumerableFramework)
 			}
 		}
+	}
+}
+
+type context struct {
+	taskName,
+	taskID,
+	slaveID,
+	taskIP,
+	slaveIP string
+}
+
+func (rg *RecordGenerator) taskRecord(task state.Task, f state.Framework, domain string, spec labels.Func, ipSources []string, enumFW *EnumerableFramework) {
+
+	newTask := &EnumerableTask{ID: task.ID, Name: task.Name}
+
+	enumFW.Tasks = append(enumFW.Tasks, newTask)
+
+	// define context
+	ctx := context{
+		spec(task.Name),
+		hashString(task.ID),
+		slaveIDTail(task.SlaveID),
+		task.IP(ipSources...),
+		task.SlaveIP,
+	}
+
+	// use DiscoveryInfo name if defined instead of task name
+	if task.HasDiscoveryInfo() {
+		// LEGACY TODO: REMOVE
+		ctx.taskName = task.DiscoveryInfo.Name
+		rg.taskContextRecord(ctx, task, f, domain, spec, newTask)
+		// LEGACY, TODO: REMOVE
+
+		ctx.taskName = spec(task.DiscoveryInfo.Name)
+		rg.taskContextRecord(ctx, task, f, domain, spec, newTask)
+	} else {
+		rg.taskContextRecord(ctx, task, f, domain, spec, newTask)
+	}
+
+}
+func (rg *RecordGenerator) taskContextRecord(ctx context, task state.Task, f state.Framework, domain string, spec labels.Func, enumTask *EnumerableTask) {
+	fname := labels.DomainFrag(f.Name, labels.Sep, spec)
+
+	tail := "." + domain + "."
+
+	// insert canonical A records
+	canonical := ctx.taskName + "-" + ctx.taskID + "-" + ctx.slaveID + "." + fname
+	arec := ctx.taskName + "." + fname
+
+	rg.insertTaskRR(arec+tail, ctx.taskIP, A, enumTask)
+	rg.insertTaskRR(canonical+tail, ctx.taskIP, A, enumTask)
+
+	rg.insertTaskRR(arec+".slave"+tail, ctx.slaveIP, A, enumTask)
+	rg.insertTaskRR(canonical+".slave"+tail, ctx.slaveIP, A, enumTask)
+
+	// recordName generates records for ctx.taskName, given some generation chain
+	recordName := func(gen chain) { gen("_" + ctx.taskName) }
+
+	// asSRV is always the last link in a chain, it must insert RR's
+	asSRV := func(target string) chain {
+		return func(records ...string) {
+			for i := range records {
+				name := records[i] + tail
+				rg.insertTaskRR(name, target, SRV, enumTask)
+			}
+		}
+	}
+
+	// Add RFC 2782 SRV records
+	var subdomains []string
+	if task.HasDiscoveryInfo() {
+		subdomains = []string{"slave"}
+	} else {
+		subdomains = []string{"slave", domainNone}
+	}
+
+	slaveHost := canonical + ".slave" + tail
+	for _, port := range task.Ports() {
+		slaveTarget := slaveHost + ":" + port
+		recordName(withProtocol(protocolNone, fname, spec,
+			withSubdomains(subdomains, asSRV(slaveTarget))))
+	}
+
+	if !task.HasDiscoveryInfo() {
+		return
+	}
+
+	for _, port := range task.DiscoveryInfo.Ports.DiscoveryPorts {
+		target := canonical + tail + ":" + strconv.Itoa(port.Number)
+		recordName(withProtocol(port.Protocol, fname, spec,
+			withNamedPort(port.Name, spec, asSRV(target))))
 	}
 }
 
@@ -481,53 +586,30 @@ func (rg *RecordGenerator) setFromLocal(host string, ns string) {
 				continue
 			}
 
-			rg.insertRR(ns, ip.String(), "A")
+			rg.insertRR(ns, ip.String(), A)
 		}
 	}
-}
-
-func (rg *RecordGenerator) exists(name, host, rtype string) bool {
-	if rtype == "A" {
-		if val, ok := rg.As[name]; ok {
-			// check if A record already exists
-			// identical tasks on same slave
-			for _, b := range val {
-				if b == host {
-					return true
-				}
-			}
-		}
-	} else {
-		if val, ok := rg.SRVs[name]; ok {
-			// check if SRV record already exists
-			for _, b := range val {
-				if b == host {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 // insertRR adds a record to the appropriate record map for the given name/host pair,
 // but only if the pair is unique. returns true if added, false otherwise.
 // TODO(???): REFACTOR when storage is updated
-func (rg *RecordGenerator) insertRR(name, host, rtype string) bool {
-	if host == "" || rg.exists(name, host, rtype) {
-		return false
+func (rg *RecordGenerator) insertTaskRR(name, host string, kind rrsKind, enumTask *EnumerableTask) bool {
+	if rg.insertRR(name, host, kind) {
+		enumRecord := EnumerableRecord{Name: name, Host: host, Rtype: string(kind)}
+		enumTask.Records = append(enumTask.Records, enumRecord)
+		return true
 	}
+	return false
+}
 
-	logging.VeryVerbose.Println("[" + rtype + "]\t" + name + ": " + host)
-
-	if rtype == "A" {
-		val := rg.As[name]
-		rg.As[name] = append(val, host)
-	} else {
-		val := rg.SRVs[name]
-		rg.SRVs[name] = append(val, host)
+func (rg *RecordGenerator) insertRR(name, host string, kind rrsKind) (added bool) {
+	if rrs := kind.rrs(rg); rrs != nil {
+		if added = rrs.add(name, host); added {
+			logging.VeryVerbose.Println("[" + string(kind) + "]\t" + name + ": " + host)
+		}
 	}
-	return true
+	return
 }
 
 // leaderIP returns the ip for the mesos master

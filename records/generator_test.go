@@ -23,12 +23,21 @@ func init() {
 	logging.SetupLogs()
 }
 
+func (rg *RecordGenerator) exists(name, host string, kind rrsKind) bool {
+	rrs := kind.rrs(rg)
+	if val, ok := rrs[name]; ok {
+		_, ok := val[host]
+		return ok
+	}
+	return false
+}
+
 func TestMasterRecord(t *testing.T) {
 	// masterRecord(domain string, masters []string, leader string)
 	type expectedRR struct {
-		name  string
-		host  string
-		rtype string
+		name string
+		host string
+		kind rrsKind
 	}
 	tt := []struct {
 		domain  string
@@ -43,77 +52,77 @@ func TestMasterRecord(t *testing.T) {
 		{"foo.com", nil, "3@4", nil},
 		{"foo.com", nil, "5@6:7",
 			[]expectedRR{
-				{"leader.foo.com.", "6", "A"},
-				{"master.foo.com.", "6", "A"},
-				{"master0.foo.com.", "6", "A"},
-				{"_leader._tcp.foo.com.", "leader.foo.com.:7", "SRV"},
-				{"_leader._udp.foo.com.", "leader.foo.com.:7", "SRV"},
+				{"leader.foo.com.", "6", A},
+				{"master.foo.com.", "6", A},
+				{"master0.foo.com.", "6", A},
+				{"_leader._tcp.foo.com.", "leader.foo.com.:7", SRV},
+				{"_leader._udp.foo.com.", "leader.foo.com.:7", SRV},
 			}},
 		// single master: leader and fallback
 		{"foo.com", []string{"6:7"}, "5@6:7",
 			[]expectedRR{
-				{"leader.foo.com.", "6", "A"},
-				{"master.foo.com.", "6", "A"},
-				{"master0.foo.com.", "6", "A"},
-				{"_leader._tcp.foo.com.", "leader.foo.com.:7", "SRV"},
-				{"_leader._udp.foo.com.", "leader.foo.com.:7", "SRV"},
+				{"leader.foo.com.", "6", A},
+				{"master.foo.com.", "6", A},
+				{"master0.foo.com.", "6", A},
+				{"_leader._tcp.foo.com.", "leader.foo.com.:7", SRV},
+				{"_leader._udp.foo.com.", "leader.foo.com.:7", SRV},
 			}},
 		// leader not in fallback list
 		{"foo.com", []string{"8:9"}, "5@6:7",
 			[]expectedRR{
-				{"leader.foo.com.", "6", "A"},
-				{"master.foo.com.", "6", "A"},
-				{"master.foo.com.", "8", "A"},
-				{"master1.foo.com.", "6", "A"},
-				{"master0.foo.com.", "8", "A"},
-				{"_leader._tcp.foo.com.", "leader.foo.com.:7", "SRV"},
-				{"_leader._udp.foo.com.", "leader.foo.com.:7", "SRV"},
+				{"leader.foo.com.", "6", A},
+				{"master.foo.com.", "6", A},
+				{"master.foo.com.", "8", A},
+				{"master1.foo.com.", "6", A},
+				{"master0.foo.com.", "8", A},
+				{"_leader._tcp.foo.com.", "leader.foo.com.:7", SRV},
+				{"_leader._udp.foo.com.", "leader.foo.com.:7", SRV},
 			}},
 		// duplicate fallback masters, leader not in fallback list
 		{"foo.com", []string{"8:9", "8:9"}, "5@6:7",
 			[]expectedRR{
-				{"leader.foo.com.", "6", "A"},
-				{"master.foo.com.", "6", "A"},
-				{"master.foo.com.", "8", "A"},
-				{"master1.foo.com.", "6", "A"},
-				{"master0.foo.com.", "8", "A"},
-				{"_leader._tcp.foo.com.", "leader.foo.com.:7", "SRV"},
-				{"_leader._udp.foo.com.", "leader.foo.com.:7", "SRV"},
+				{"leader.foo.com.", "6", A},
+				{"master.foo.com.", "6", A},
+				{"master.foo.com.", "8", A},
+				{"master1.foo.com.", "6", A},
+				{"master0.foo.com.", "8", A},
+				{"_leader._tcp.foo.com.", "leader.foo.com.:7", SRV},
+				{"_leader._udp.foo.com.", "leader.foo.com.:7", SRV},
 			}},
 		// leader that's also listed in the fallback list (at the end)
 		{"foo.com", []string{"8:9", "6:7"}, "5@6:7",
 			[]expectedRR{
-				{"leader.foo.com.", "6", "A"},
-				{"master.foo.com.", "6", "A"},
-				{"master.foo.com.", "8", "A"},
-				{"master1.foo.com.", "6", "A"},
-				{"master0.foo.com.", "8", "A"},
-				{"_leader._tcp.foo.com.", "leader.foo.com.:7", "SRV"},
-				{"_leader._udp.foo.com.", "leader.foo.com.:7", "SRV"},
+				{"leader.foo.com.", "6", A},
+				{"master.foo.com.", "6", A},
+				{"master.foo.com.", "8", A},
+				{"master1.foo.com.", "6", A},
+				{"master0.foo.com.", "8", A},
+				{"_leader._tcp.foo.com.", "leader.foo.com.:7", SRV},
+				{"_leader._udp.foo.com.", "leader.foo.com.:7", SRV},
 			}},
 		// duplicate leading masters in the fallback list
 		{"foo.com", []string{"8:9", "6:7", "6:7"}, "5@6:7",
 			[]expectedRR{
-				{"leader.foo.com.", "6", "A"},
-				{"master.foo.com.", "6", "A"},
-				{"master.foo.com.", "8", "A"},
-				{"master1.foo.com.", "6", "A"},
-				{"master0.foo.com.", "8", "A"},
-				{"_leader._tcp.foo.com.", "leader.foo.com.:7", "SRV"},
-				{"_leader._udp.foo.com.", "leader.foo.com.:7", "SRV"},
+				{"leader.foo.com.", "6", A},
+				{"master.foo.com.", "6", A},
+				{"master.foo.com.", "8", A},
+				{"master1.foo.com.", "6", A},
+				{"master0.foo.com.", "8", A},
+				{"_leader._tcp.foo.com.", "leader.foo.com.:7", SRV},
+				{"_leader._udp.foo.com.", "leader.foo.com.:7", SRV},
 			}},
 		// leader that's also listed in the fallback list (in the middle)
 		{"foo.com", []string{"8:9", "6:7", "bob:0"}, "5@6:7",
 			[]expectedRR{
-				{"leader.foo.com.", "6", "A"},
-				{"master.foo.com.", "6", "A"},
-				{"master.foo.com.", "8", "A"},
-				{"master.foo.com.", "bob", "A"},
-				{"master0.foo.com.", "8", "A"},
-				{"master1.foo.com.", "6", "A"},
-				{"master2.foo.com.", "bob", "A"},
-				{"_leader._tcp.foo.com.", "leader.foo.com.:7", "SRV"},
-				{"_leader._udp.foo.com.", "leader.foo.com.:7", "SRV"},
+				{"leader.foo.com.", "6", A},
+				{"master.foo.com.", "6", A},
+				{"master.foo.com.", "8", A},
+				{"master.foo.com.", "bob", A},
+				{"master0.foo.com.", "8", A},
+				{"master1.foo.com.", "6", A},
+				{"master2.foo.com.", "bob", A},
+				{"_leader._tcp.foo.com.", "leader.foo.com.:7", SRV},
+				{"_leader._udp.foo.com.", "leader.foo.com.:7", SRV},
 			}},
 	}
 	for i, tc := range tt {
@@ -133,14 +142,17 @@ func TestMasterRecord(t *testing.T) {
 		expectedA := make(rrs)
 		expectedSRV := make(rrs)
 		for _, e := range tc.expect {
-			found := rg.exists(e.name, e.host, e.rtype)
+			found := rg.exists(e.name, e.host, e.kind)
 			if !found {
-				t.Fatalf("test case %d: missing expected record: name=%q host=%q rtype=%s, As=%v", i+1, e.name, e.host, e.rtype, rg.As)
+				t.Fatalf("test case %d: missing expected record: name=%q host=%q kind=%s, As=%v", i+1, e.name, e.host, e.kind, rg.As)
 			}
-			if e.rtype == "A" {
-				expectedA[e.name] = append(expectedA[e.name], e.host)
-			} else {
-				expectedSRV[e.name] = append(expectedSRV[e.name], e.host)
+			switch e.kind {
+			case A:
+				expectedA.add(e.name, e.host)
+			case SRV:
+				expectedSRV.add(e.name, e.host)
+			default:
+				t.Fatalf("unexpected kind %q", e.kind)
 			}
 		}
 		if !reflect.DeepEqual(rg.As, expectedA) {
@@ -197,6 +209,7 @@ func TestInsertState(t *testing.T) {
 		name string
 		want []string
 	}{
+		{rg.As, "big-dog.marathon.mesos.", []string{"10.3.0.1"}},
 		{rg.As, "liquor-store.marathon.mesos.", []string{"10.3.0.1", "10.3.0.2"}},
 		{rg.As, "liquor-store.marathon.slave.mesos.", []string{"1.2.3.11", "1.2.3.12"}},
 		{rg.As, "car-store.marathon.slave.mesos.", []string{"1.2.3.11"}},
@@ -209,6 +222,10 @@ func TestInsertState(t *testing.T) {
 		{rg.As, "slave.mesos.", []string{"1.2.3.10", "1.2.3.11", "1.2.3.12"}},
 		{rg.As, "some-box.chronoswithaspaceandmixe.mesos.", []string{"1.2.3.11"}}, // ensure we translate the framework name as well
 		{rg.As, "marathon.mesos.", []string{"1.2.3.11"}},
+		{rg.SRVs, "_big-dog._tcp.marathon.mesos.", []string{
+			"big-dog-4dfjd-0.marathon.mesos.:80",
+			"big-dog-4dfjd-0.marathon.mesos.:443",
+		}},
 		{rg.SRVs, "_poseidon._tcp.marathon.mesos.", nil},
 		{rg.SRVs, "_leader._tcp.mesos.", []string{"leader.mesos.:5050"}},
 		{rg.SRVs, "_liquor-store._tcp.marathon.mesos.", []string{
@@ -219,6 +236,14 @@ func TestInsertState(t *testing.T) {
 		}},
 		{rg.SRVs, "_liquor-store._udp.marathon.mesos.", nil},
 		{rg.SRVs, "_liquor-store.marathon.mesos.", nil},
+		{rg.SRVs, "_https._liquor-store._tcp.marathon.mesos.", []string{
+			"liquor-store-4dfjd-0.marathon.mesos.:443",
+			"liquor-store-zasmd-1.marathon.mesos.:443",
+		}},
+		{rg.SRVs, "_http._liquor-store._tcp.marathon.mesos.", []string{
+			"liquor-store-4dfjd-0.marathon.mesos.:80",
+			"liquor-store-zasmd-1.marathon.mesos.:80",
+		}},
 		{rg.SRVs, "_car-store._tcp.marathon.mesos.", []string{
 			"car-store-zinaz-0.marathon.slave.mesos.:31364",
 			"car-store-zinaz-0.marathon.slave.mesos.:31365",
@@ -245,8 +270,17 @@ func TestInsertState(t *testing.T) {
 		{rgDocker.As, "nginx.marathon.mesos.", []string{"1.2.3.11"}},
 		{rgDocker.As, "car-store.marathon.slave.mesos.", []string{"1.2.3.11"}},
 	} {
-		if got := tt.rrs[tt.name]; !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("test #%d: %q: got: %q, want: %q", i, tt.name, got, tt.want)
+		// convert want into a map[string]struct{} (string set) for simpler comparison
+		// via reflect.DeepEqual
+		want := map[string]struct{}{}
+		for _, x := range tt.want {
+			want[x] = struct{}{}
+		}
+		if got := tt.rrs[tt.name]; !reflect.DeepEqual(got, want) {
+			if len(got) == 0 && len(want) == 0 {
+				continue
+			}
+			t.Errorf("test #%d: %q: got: %q, want: %q", i, tt.name, got, want)
 		}
 	}
 }
@@ -256,9 +290,9 @@ func TestNTasks(t *testing.T) {
 	rg := &RecordGenerator{}
 	rg.As = make(rrs)
 
-	rg.insertRR("blah.mesos", "10.0.0.1", "A")
-	rg.insertRR("blah.mesos", "10.0.0.1", "A")
-	rg.insertRR("blah.mesos", "10.0.0.2", "A")
+	rg.insertRR("blah.mesos", "10.0.0.1", A)
+	rg.insertRR("blah.mesos", "10.0.0.1", A)
+	rg.insertRR("blah.mesos", "10.0.0.2", A)
 
 	k, _ := rg.As["blah.mesos"]
 
