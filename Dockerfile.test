@@ -9,6 +9,7 @@ COPY ./ "$GOPATH/src/github.com/mesosphere/mesos-dns"
 RUN cd "$GOPATH/src/github.com/mesosphere/mesos-dns" && ( test -d ./Godeps || echo go get -u )
 
 # Install consul for tests
-RUN go get -u github.com/hashicorp/consul
+RUN go get gopkg.in/hashicorp/consul.v0
+RUN ln -s "$GOPATH/bin/consul.v0" "$GOPATH/bin/consul"
 
 WORKDIR "$GOPATH/src/github.com/mesosphere/mesos-dns"
