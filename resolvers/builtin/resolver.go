@@ -17,6 +17,7 @@ import (
 	_ "github.com/mesos/mesos-go/detector/zoo" // Registers the ZK detector
 	"github.com/mesosphere/mesos-dns/exchanger"
 	"github.com/mesosphere/mesos-dns/logging"
+	"github.com/mesosphere/mesos-dns/models"
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/utils"
 	"github.com/miekg/dns"
@@ -467,6 +468,7 @@ func (res *Resolver) configureHTTP() {
 	ws.Route(ws.GET("/v1/services/{service}").To(res.RestService))
 	if res.config.EnumerationOn {
 		ws.Route(ws.GET("/v1/enumerate").To(res.RestEnumerate))
+		ws.Route(ws.GET("/v1/axfr").To(res.RestAXFR))
 	}
 	restful.Add(ws)
 }
@@ -477,14 +479,14 @@ func (res *Resolver) LaunchHTTP() <-chan error {
 	defer utils.HandleCrash()
 
 	res.configureHTTP()
-	portString := ":" + strconv.Itoa(res.config.HTTPPort)
+	listenAddress := net.JoinHostPort(res.config.HTTPListener, strconv.Itoa(res.config.HTTPPort))
 
 	errCh := make(chan error, 1)
 	go func() {
 		var err error
 		defer func() { errCh <- err }()
 
-		if err = http.ListenAndServe(portString, nil); err != nil {
+		if err = http.ListenAndServe(listenAddress, nil); err != nil {
 			err = fmt.Errorf("Failed to setup http server: %v", err)
 		} else {
 			logging.Error.Println("Not serving http requests any more.")
@@ -505,6 +507,29 @@ func (res *Resolver) RestEnumerate(req *restful.Request, resp *restful.Response)
 
 	enumData := res.records().EnumData
 	if err := resp.WriteAsJson(enumData); err != nil {
+		logging.Error.Println(err)
+	}
+}
+
+// RestAXFR handles HTTP requests to turn the zone into a transferable format
+func (res *Resolver) RestAXFR(req *restful.Request, resp *restful.Response) {
+	records := res.records()
+
+	AXFRRecords := models.AXFRRecords{
+		SRVs: records.SRVs.ToAXFRResourceRecordSet(),
+		As:   records.As.ToAXFRResourceRecordSet(),
+	}
+	AXFR := models.AXFR{
+		Records:        AXFRRecords,
+		Serial:         atomic.LoadUint32(&res.rg.Config.SOASerial),
+		Mname:          res.rg.Config.SOAMname,
+		Rname:          res.rg.Config.SOARname,
+		TTL:            res.config.TTL,
+		RefreshSeconds: res.rg.Config.RefreshSeconds,
+		Domain:         res.rg.Config.Domain,
+	}
+
+	if err := resp.WriteAsJson(AXFR); err != nil {
 		logging.Error.Println(err)
 	}
 }
