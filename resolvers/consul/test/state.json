@@ -5497,6 +5497,77 @@
             },
             "user": "root",
             "webui_url": "http://mesosmaster-r01-s01:8080"
+        },
+        {
+          "id": "f994ff32-6991-418c-ab1a-5620d8826abb-0010",
+          "name": "mesos-execute instance",
+          "used_resources": {
+            "disk": 0,
+            "mem": 128,
+            "gpus": 0,
+            "cpus": 1
+          },
+          "offered_resources": {
+            "disk": 0,
+            "mem": 0,
+            "gpus": 0,
+            "cpus": 0
+          },
+          "capabilities": [
+            "TASK_KILLING_STATE"
+          ],
+          "hostname": "",
+          "webui_url": "",
+          "active": true,
+          "user": "root",
+          "failover_timeout": 0,
+          "checkpoint": false,
+          "role": "*",
+          "registered_time": 1466450966.17493,
+          "unregistered_time": 0,
+          "resources": {
+            "disk": 0,
+            "mem": 128,
+            "gpus": 0,
+            "cpus": 1
+          },
+          "tasks": [
+            {
+              "id": "can-i-ping",
+              "name": "can-i-ping",
+              "framework_id": "f994ff32-6991-418c-ab1a-5620d8826abb-0010",
+              "executor_id": "",
+              "slave_id": "20160107-001256-134875658-5050-27524-S66",
+              "state": "TASK_RUNNING",
+              "resources": {
+                "disk": 0,
+                "mem": 128,
+                "gpus": 0,
+                "cpus": 1
+              },
+              "statuses": [
+                {
+                  "state": "TASK_RUNNING",
+                  "timestamp": 1466450966.32774,
+                  "container_status": {
+                    "network_infos": [
+                      {
+                        "ip_address": "172.29.128.181",
+                        "ip_addresses": [
+                          {
+                            "ip_address": "172.29.128.181"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "completed_tasks": [],
+          "offers": [],
+          "executors": []
         }
     ],
     "git_branch": "refs/heads/master",

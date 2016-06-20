@@ -227,17 +227,30 @@ func (c *ConsulBackend) generateFrameworkRecords() {
 			continue
 		}
 
-		// task, pid, name, hostname
-		port, err := strconv.Atoi(framework.PID.Port)
-		if err != nil {
-			logging.Error.Println("Failed to get port for framework", framework.Name, ". Error:", err)
+		// Pull sanitized framework host + port values
+		frameworkHost, frameworkPort := framework.HostPort()
+
+		// :(  records.hostToIP4 would be super
+		if frameworkHost == "" {
 			continue
 		}
 
-		// Silly
+		// If no framework port is returned, we'll set it to 0 so we can still
+		// create an A record
+		if frameworkPort == "" {
+			frameworkPort = "0"
+		}
+
+		port, err := strconv.Atoi(frameworkPort)
+		if err != nil {
+			logging.Error.Println("Failed to get port (", frameworkPort, ") for framework", framework.Name, ". Error:", err)
+			continue
+		}
+
 		var slaveid string
-		if _, ok := c.SlaveIPID[framework.PID.Host]; ok {
-			slaveid = c.SlaveIPID[framework.PID.Host]
+
+		if _, ok := c.SlaveIPID[frameworkHost]; ok {
+			slaveid = c.SlaveIPID[frameworkHost]
 		} else {
 			// Try to discover the slave that the framework is running on
 			// by comparing the hostnames
@@ -249,7 +262,6 @@ func (c *ConsulBackend) generateFrameworkRecords() {
 		}
 
 		if slaveid == "" {
-			logging.Error.Println("Unable to find slave for", framework.Name)
 			continue
 		}
 
@@ -258,7 +270,7 @@ func (c *ConsulBackend) generateFrameworkRecords() {
 			c.FrameworkRecords[slaveid] = &ConsulRecords{}
 		}
 
-		c.FrameworkRecords[slaveid].Current = append(c.FrameworkRecords[slaveid].Current, createService(strings.Join([]string{c.ServicePrefix, framework.Name}, ":"), framework.Name, framework.PID.Host, port, []string{}))
+		c.FrameworkRecords[slaveid].Current = append(c.FrameworkRecords[slaveid].Current, createService(strings.Join([]string{c.ServicePrefix, framework.Name}, ":"), framework.Name, frameworkHost, port, []string{}))
 		for _, rec := range c.FrameworkRecords[slaveid].Current {
 			logging.VeryVerbose.Println("Framework record:", rec.ID, "=>", rec.Address)
 		}

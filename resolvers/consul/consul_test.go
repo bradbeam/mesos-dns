@@ -97,7 +97,7 @@ func TestTaskRecords(t *testing.T) {
 
 	// Each slave can have a different number of tasks running
 	expected := map[string]int{
-		"20160107-001256-134875658-5050-27524-S66": 2,
+		"20160107-001256-134875658-5050-27524-S66": 3,
 		LOCALSLAVEID:                               3,
 		"20160107-001256-134875658-5050-27524-S1":  3,
 		"20160107-001256-134875658-5050-27524-S2":  2,
@@ -125,7 +125,7 @@ func TestHealthchecks(t *testing.T) {
 
 	// Each slave can have a different number of tasks running
 	expected := map[string]int{
-		"20160107-001256-134875658-5050-27524-S66": 2,
+		"20160107-001256-134875658-5050-27524-S66": 3,
 		LOCALSLAVEID:                               3,
 		"20160107-001256-134875658-5050-27524-S1":  3,
 		"20160107-001256-134875658-5050-27524-S2":  2,
