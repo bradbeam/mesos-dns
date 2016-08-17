@@ -99,6 +99,8 @@ type RecordGenerator struct {
 	EnumData      EnumerationData
 	httpClient    httpcli.Doer
 	stateEndpoint urls.Builder
+	Config        Config
+	State         state.State
 }
 
 // EnumerableRecord is the lowest level object, and should map 1:1 with DNS records
@@ -143,6 +145,7 @@ func WithConfig(config Config) Option {
 		})
 		timeout = httpcli.Timeout(time.Duration(config.StateTimeoutSeconds) * time.Second)
 		doer    = httpcli.New(config.MesosAuthentication, config.httpConfigMap, transport, timeout)
+		cfg     = config
 	)
 	return func(rg *RecordGenerator) {
 		rg.httpClient = doer
@@ -150,6 +153,7 @@ func WithConfig(config Config) Option {
 			urls.Path("/master/state.json"),
 			opt,
 		)
+		rg.Config = cfg
 	}
 }
 
@@ -166,7 +170,7 @@ func NewRecordGenerator(options ...Option) *RecordGenerator {
 
 // ParseState retrieves and parses the Mesos master /state.json and converts it
 // into DNS records.
-func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
+func (rg *RecordGenerator) ParseState(masters ...string) error {
 	// find master -- return if error
 	sj, err := rg.findMaster(masters...)
 	if err != nil {
@@ -180,11 +184,11 @@ func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
 	}
 
 	hostSpec := labels.RFC1123
-	if c.EnforceRFC952 {
+	if rg.Config.EnforceRFC952 {
 		hostSpec = labels.RFC952
 	}
 
-	return rg.InsertState(sj, c.Domain, c.SOARname, c.Listener, masters, c.IPSources, hostSpec)
+	return rg.InsertState(sj, rg.Config.Domain, rg.Config.SOARname, rg.Config.Listener, masters, rg.Config.IPSources, hostSpec)
 }
 
 // Tries each master and looks for the leader
@@ -331,6 +335,7 @@ func (rg *RecordGenerator) InsertState(sj state.State, domain, ns, listener stri
 	rg.listenerRecord(listener, ns)
 	rg.masterRecord(domain, masters, sj.Leader)
 	rg.taskRecords(sj, domain, spec, ipSources)
+	rg.State = sj
 
 	return nil
 }

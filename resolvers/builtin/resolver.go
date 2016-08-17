@@ -1,5 +1,5 @@
-// Package resolver contains functions to handle resolving .mesos domains
-package resolver
+// Package builtin contains functions to handle resolving .mesos domains
+package builtin
 
 import (
 	"errors"
@@ -19,37 +19,33 @@ import (
 	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/models"
 	"github.com/mesosphere/mesos-dns/records"
-	"github.com/mesosphere/mesos-dns/util"
+	"github.com/mesosphere/mesos-dns/utils"
 	"github.com/miekg/dns"
 )
 
 // Resolver holds configuration state and the resource records
 type Resolver struct {
-	masters          []string
-	version          string
-	config           records.Config
-	rs               *records.RecordGenerator
-	rsLock           sync.RWMutex
-	rng              *rand.Rand
-	fwd              exchanger.Forwarder
-	generatorOptions []records.Option
+	masters []string
+	version string
+	config  *Config
+	rs      *records.RecordGenerator
+	rsLock  sync.RWMutex
+	rng     *rand.Rand
+	fwd     exchanger.Forwarder
 }
 
 // New returns a Resolver with the given version and configuration.
-func New(version string, config records.Config) *Resolver {
-	generatorOptions := []records.Option{
-		records.WithConfig(config),
-	}
-	recordGenerator := records.NewRecordGenerator(generatorOptions...)
+func New(version string, errch chan error, config *Config, rg *records.RecordGenerator) *Resolver {
+	config.initResolver()
+
 	r := &Resolver{
 		version: version,
 		config:  config,
-		rs:      recordGenerator,
+		rs:      rg,
 		// rand.Sources aren't safe for concurrent use, except the global one.
 		// See: https://github.com/golang/go/issues/3611
-		rng:              rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
-		masters:          append([]string{""}, config.Masters...),
-		generatorOptions: generatorOptions,
+		rng:     rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
+		masters: append([]string{""}, rg.Config.Masters...),
 	}
 
 	timeout := 5 * time.Second
@@ -57,11 +53,20 @@ func New(version string, config records.Config) *Resolver {
 		timeout = time.Duration(config.Timeout) * time.Second
 	}
 
-	rs := config.Resolvers
+	rs := config.ExternalDNS
 	if !config.ExternalOn {
 		rs = rs[:0]
 	}
 	r.fwd = exchanger.NewForwarder(rs, exchangers(timeout, "udp", "tcp"))
+
+	// launch DNS server
+	if config.DNSOn {
+		go func() { errch <- <-r.LaunchDNS() }()
+	}
+	// launch HTTP server
+	if config.HTTPOn {
+		go func() { errch <- <-r.LaunchHTTP() }()
+	}
 
 	return r
 }
@@ -99,7 +104,7 @@ func (res *Resolver) records() *records.RecordGenerator {
 // returning a error channel to which errors are asynchronously sent.
 func (res *Resolver) LaunchDNS() <-chan error {
 	// Handers for Mesos requests
-	dns.HandleFunc(res.config.Domain+".", panicRecover(res.HandleMesos))
+	dns.HandleFunc(res.rs.Config.Domain+".", panicRecover(res.HandleMesos))
 	// Handler for nonMesos requests
 	dns.HandleFunc(".", panicRecover(res.HandleNonMesos))
 
@@ -115,7 +120,7 @@ func (res *Resolver) LaunchDNS() <-chan error {
 // the returned signal chan is closed upon the server successfully entering the listening phase.
 // if the server aborts then an error is sent on the error chan.
 func (res *Resolver) Serve(proto string) (<-chan struct{}, <-chan error) {
-	defer util.HandleCrash()
+	defer utils.HandleCrash()
 
 	ch := make(chan struct{})
 	server := &dns.Server{
@@ -146,17 +151,16 @@ func (res *Resolver) SetMasters(masters []string) {
 
 // Reload triggers a new state load from the configured mesos masters.
 // This method is not goroutine-safe.
-func (res *Resolver) Reload() {
-	t := records.NewRecordGenerator(res.generatorOptions...)
-	err := t.ParseState(res.config, res.masters...)
+func (res *Resolver) Reload(rg *records.RecordGenerator) {
+	err := rg.ParseState(res.masters...)
 
 	if err == nil {
 		timestamp := uint32(time.Now().Unix())
 		// may need to refactor for fairness
 		res.rsLock.Lock()
 		defer res.rsLock.Unlock()
-		atomic.StoreUint32(&res.config.SOASerial, timestamp)
-		res.rs = t
+		atomic.StoreUint32(&res.rs.Config.SOASerial, timestamp)
+		res.rs = rg
 	} else {
 		logging.Error.Printf("Warning: Error generating records: %v; keeping old DNS state", err)
 	}
@@ -222,12 +226,12 @@ func (res *Resolver) formatSOA(dom string) *dns.SOA {
 			Class:  dns.ClassINET,
 			Ttl:    ttl,
 		},
-		Ns:      res.config.SOAMname,
-		Mbox:    res.config.SOARname,
-		Serial:  atomic.LoadUint32(&res.config.SOASerial),
-		Refresh: res.config.SOARefresh,
-		Retry:   res.config.SOARetry,
-		Expire:  res.config.SOAExpire,
+		Ns:      res.rs.Config.SOAMname,
+		Mbox:    res.rs.Config.SOARname,
+		Serial:  atomic.LoadUint32(&res.rs.Config.SOASerial),
+		Refresh: res.rs.Config.SOARefresh,
+		Retry:   res.rs.Config.SOARetry,
+		Expire:  res.rs.Config.SOAExpire,
 		Minttl:  ttl,
 	}
 }
@@ -243,7 +247,7 @@ func (res *Resolver) formatNS(dom string) *dns.NS {
 			Class:  dns.ClassINET,
 			Ttl:    ttl,
 		},
-		Ns: res.config.SOAMname,
+		Ns: res.rs.Config.SOAMname,
 	}
 }
 
@@ -491,7 +495,7 @@ func (res *Resolver) configureHTTP() {
 // LaunchHTTP starts an HTTP server for the Resolver, returning a error channel
 // to which errors are asynchronously sent.
 func (res *Resolver) LaunchHTTP() <-chan error {
-	defer util.HandleCrash()
+	defer utils.HandleCrash()
 
 	res.configureHTTP()
 	listenAddress := net.JoinHostPort(res.config.HTTPListener, strconv.Itoa(res.config.HTTPPort))
@@ -536,12 +540,12 @@ func (res *Resolver) RestAXFR(req *restful.Request, resp *restful.Response) {
 	}
 	AXFR := models.AXFR{
 		Records:        AXFRRecords,
-		Serial:         atomic.LoadUint32(&res.config.SOASerial),
-		Mname:          res.config.SOAMname,
-		Rname:          res.config.SOARname,
+		Serial:         atomic.LoadUint32(&res.rs.Config.SOASerial),
+		Mname:          res.rs.Config.SOAMname,
+		Rname:          res.rs.Config.SOARname,
 		TTL:            res.config.TTL,
-		RefreshSeconds: res.config.RefreshSeconds,
-		Domain:         res.config.Domain,
+		RefreshSeconds: res.rs.Config.RefreshSeconds,
+		Domain:         res.rs.Config.Domain,
 	}
 
 	if err := resp.WriteAsJson(AXFR); err != nil {
@@ -590,7 +594,7 @@ func (res *Resolver) RestHost(req *restful.Request, resp *restful.Response) {
 		logging.Error.Println(err)
 	}
 
-	stats(dom, res.config.Domain+".", len(aRRs) > 0)
+	stats(dom, res.rs.Config.Domain+".", len(aRRs) > 0)
 }
 
 func stats(domain, zone string, success bool) {
@@ -655,7 +659,7 @@ func (res *Resolver) RestService(req *restful.Request, resp *restful.Response) {
 		logging.Error.Println(err)
 	}
 
-	stats(dom, res.config.Domain+".", len(srvRRs) > 0)
+	stats(dom, res.rs.Config.Domain+".", len(srvRRs) > 0)
 }
 
 // panicRecover catches any panics from the resolvers and sets an error

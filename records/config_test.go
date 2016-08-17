@@ -1,27 +1,13 @@
 package records
 
 import (
+	"reflect"
 	"testing"
 )
-
-func TestNonLocalAddies(t *testing.T) {
-	nlocal := []string{"127.0.0.1"}
-	addies := nonLocalAddies(nlocal)
-
-	for i := 0; i < len(addies); i++ {
-		if "127.0.0.1" == addies[i] {
-			t.Error("finding a local address")
-		}
-	}
-}
 
 func TestNewConfigValidates(t *testing.T) {
 	c := NewConfig()
 	err := validateIPSources(c.IPSources)
-	if err != nil {
-		t.Error(err)
-	}
-	err = validateResolvers(c.Resolvers)
 	if err != nil {
 		t.Error(err)
 	}
@@ -37,5 +23,32 @@ func TestNewConfigValidates(t *testing.T) {
 	err = validateEnabledServices(&c)
 	if err != nil {
 		t.Error(err)
+	}
+}
+
+type testingFile struct {
+	file   string
+	result map[string]interface{}
+	valid  bool
+}
+
+func TestReadConfig(t *testing.T) {
+	for _, tc := range []testingFile{
+		{"/does/not/exist", nil, false},
+		{"../factories/bogusconfig.json", nil, false},
+		{"../factories/emptyconfig.json", nil, false},
+		{"../factories/validconfig.json", nil, true},
+	} {
+		c, err := ReadConfig(tc.file)
+		if err != nil && tc.valid {
+			t.Fatal("Error returned: ", err)
+		}
+
+		if tc.result != nil {
+			for k, v := range tc.result {
+				x := reflect.ValueOf(&c).Elem()
+				t.Logf("%s: %q == %q", k, v, x.FieldByName(k))
+			}
+		}
 	}
 }

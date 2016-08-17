@@ -1,4 +1,4 @@
-package resolver
+package builtin
 
 import (
 	"encoding/binary"
@@ -41,6 +41,7 @@ func TestCleanWild(t *testing.T) {
 
 func TestShuffleAnswers(t *testing.T) {
 	var res Resolver
+	res.config = NewConfig()
 
 	m := new(dns.Msg)
 
@@ -313,7 +314,7 @@ func TestHTTP(t *testing.T) {
 				"Version": "0.1.1",
 			},
 		},
-		{"/v1/config", http.StatusOK, &records.Config{}, &res.config},
+		{"/v1/config", http.StatusOK, NewConfig(), res.config},
 		{"/v1/services/_leader._tcp.mesos.", http.StatusOK, []interface{}{},
 			[]interface{}{map[string]interface{}{
 				"service": "_leader._tcp.mesos.",
@@ -353,14 +354,19 @@ func TestHTTP(t *testing.T) {
 
 func fakeDNS() (*Resolver, error) {
 	config := records.NewConfig()
-	config.Masters = []string{"144.76.157.37:5050"}
-	config.RecurseOn = false
+	config.Masters = []string{"1.2.3.4:5050"}
 	config.IPSources = []string{"docker", "mesos", "host"}
+	rg := records.NewRecordGenerator(records.WithConfig(config))
 
-	res := New("", config)
+	builtinconfig := NewConfig()
+	builtinconfig.RecurseOn = false
+
+	errch := make(chan error)
+
+	res := New("0.1.1", errch, builtinconfig, rg)
 	res.rng.Seed(0) // for deterministic tests
 
-	b, err := ioutil.ReadFile("../factories/fake.json")
+	b, err := ioutil.ReadFile("../../factories/fake.json")
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +378,7 @@ func fakeDNS() (*Resolver, error) {
 	}
 
 	spec := labels.RFC952
-	err = res.rs.InsertState(sj, "mesos", "mesos-dns.mesos.", "127.0.0.1", res.config.Masters, res.config.IPSources, spec)
+	err = res.rs.InsertState(sj, "mesos", "mesos-dns.mesos.", "127.0.0.1", res.rs.Config.Masters, res.rs.Config.IPSources, spec)
 	if err != nil {
 		return nil, err
 	}

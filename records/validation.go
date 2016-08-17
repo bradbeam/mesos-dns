@@ -6,9 +6,6 @@ import (
 )
 
 func validateEnabledServices(c *Config) error {
-	if !c.DNSOn && !c.HTTPOn {
-		return fmt.Errorf("Either DNS or HTTP server should be on")
-	}
 	if len(c.Masters) == 0 && c.Zk == "" {
 		return fmt.Errorf("specify mesos masters or zookeeper in config.json")
 	}
@@ -38,28 +35,6 @@ func validateMasters(ms []string) error {
 			return fmt.Errorf("duplicate master specified: %v", ms[i])
 		}
 		valid[m] = struct{}{}
-	}
-	return nil
-}
-
-// validateResolvers checks that each resolver in the list is a properly formatted IP address.
-// duplicate resolvers in the list are not allowed.
-// returns nil if the resolver list is empty, or else all resolvers in the list are valid.
-func validateResolvers(rs []string) error {
-	if len(rs) == 0 {
-		return nil
-	}
-	ips := make(map[string]struct{}, len(rs))
-	for _, r := range rs {
-		ip := net.ParseIP(r)
-		if ip == nil {
-			return fmt.Errorf("illegal IP specified for resolver %q", r)
-		}
-		ipstr := ip.String()
-		if _, found := ips[ipstr]; found {
-			return fmt.Errorf("duplicate resolver IP specified: %v", r)
-		}
-		ips[ipstr] = struct{}{}
 	}
 	return nil
 }

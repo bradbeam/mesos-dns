@@ -92,6 +92,7 @@ type Task struct {
 	Statuses      []Status `json:"statuses"`
 	Resources     `json:"resources"`
 	DiscoveryInfo DiscoveryInfo `json:"discovery"`
+	Labels        []Label       `json:"labels,omitempty"`
 
 	SlaveIP string `json:"-"`
 }
@@ -142,7 +143,7 @@ func hostIPs(t *Task) []string { return []string{t.SlaveIP} }
 // networkInfoIPs returns IP addresses from a given Task's
 // []Status.ContainerStatus.[]NetworkInfos.[]IPAddresses.IPAddress
 func networkInfoIPs(t *Task) []string {
-	return statusIPs(t.Statuses, func(s *Status) []string {
+	return StatusIPs(t.Statuses, func(s *Status) []string {
 		ips := make([]string, len(s.ContainerStatus.NetworkInfos))
 		for _, netinfo := range s.ContainerStatus.NetworkInfos {
 			if len(netinfo.IPAddresses) > 0 {
@@ -171,18 +172,18 @@ const (
 // dockerIPs returns IP addresses from the values of all
 // Task.[]Status.[]Labels whose keys are equal to "Docker.NetworkSettings.IPAddress".
 func dockerIPs(t *Task) []string {
-	return statusIPs(t.Statuses, labels(DockerIPLabel))
+	return StatusIPs(t.Statuses, Labels(DockerIPLabel))
 }
 
 // mesosIPs returns IP addresses from the values of all
 // Task.[]Status.[]Labels whose keys are equal to
 // "MesosContainerizer.NetworkSettings.IPAddress".
 func mesosIPs(t *Task) []string {
-	return statusIPs(t.Statuses, labels(MesosIPLabel))
+	return StatusIPs(t.Statuses, Labels(MesosIPLabel))
 }
 
-// statusIPs returns the latest running status IPs extracted with the given src
-func statusIPs(st []Status, src func(*Status) []string) []string {
+// StatusIPs returns the latest running status IPs extracted with the given src
+func StatusIPs(st []Status, src func(*Status) []string) []string {
 	// the state.json we extract from mesos makes no guarantees re: the order
 	// of the task statuses so we should check the timestamps to avoid problems
 	// down the line. we can't rely on seeing the same sequence. (@joris)
@@ -199,9 +200,9 @@ func statusIPs(st []Status, src func(*Status) []string) []string {
 	return nil
 }
 
-// labels returns all given Status.[]Labels' values whose keys are equal
+// Labels returns all given Status.[]Labels' values whose keys are equal
 // to the given key
-func labels(key string) func(*Status) []string {
+func Labels(key string) func(*Status) []string {
 	return func(s *Status) []string {
 		vs := make([]string, 0, len(s.Labels))
 		for _, l := range s.Labels {
@@ -219,6 +220,7 @@ type Framework struct {
 	PID      PID    `json:"pid"`
 	Name     string `json:"name"`
 	Hostname string `json:"hostname"`
+	Active   bool   `json:"active"`
 }
 
 // HostPort returns the hostname and port where a framework's scheduler is
@@ -232,9 +234,11 @@ func (f Framework) HostPort() (string, string) {
 
 // Slave holds a slave as defined in the /state.json Mesos HTTP endpoint.
 type Slave struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
-	PID      PID    `json:"pid"`
+	ID       string     `json:"id"`
+	Hostname string     `json:"hostname"`
+	PID      PID        `json:"pid"`
+	Attrs    Attributes `json:"attributes"`
+	Active   bool       `json:"active"`
 }
 
 // PID holds a Mesos PID and implements the json.Unmarshaler interface.
@@ -273,4 +277,11 @@ type DiscoveryPort struct {
 	Protocol string `json:"protocol"`
 	Number   int    `json:"number"`
 	Name     string `json:"name"`
+}
+
+// Attributes contains mesos attributes for slaves
+type Attributes struct {
+	DC     string `json:"dc"`
+	Master string `json:"master"`
+	Rack   string `json:"rack"`
 }
