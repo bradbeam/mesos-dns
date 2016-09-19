@@ -444,6 +444,9 @@ func (c *ConsulBackend) Cleanup() {
 					}
 				}
 			}
+
+			c.RefreshCache(slaveid)
+
 			wg.Done()
 		}()
 		wg.Wait()
@@ -550,9 +553,6 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 		return svcs
 	}
 
-	// Reset the counter so we dont overflow
-	c.Count = 0
-
 	services, err := c.Agents[agentid].Services()
 	if err != nil {
 		logging.Error.Println("Failed to get list of services from consul@", agentid, ".", err)
@@ -578,6 +578,21 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 	}
 
 	return svcs
+}
+
+// RefreshCache will clear our the internal cache of records causing a new cache to be built
+func (c *ConsulBackend) RefreshCache(slaveid string) {
+	if c.Count%c.Config.CacheRefresh != 0 {
+		return
+	}
+
+	// Reset the counter so we dont overflow
+	c.Count = 0
+
+	// Clear our existing caches
+	c.MesosRecords[slaveid].Previous = nil
+	c.FrameworkRecords[slaveid].Previous = nil
+	c.TaskRecords[slaveid].Previous = nil
 }
 
 func createService(id string, name string, address string, port int, tags []string) *capi.AgentServiceRegistration {
