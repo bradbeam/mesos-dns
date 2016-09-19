@@ -298,9 +298,37 @@ func TestCache(t *testing.T) {
 	backend.TaskRecords[slaveid].Current = nil
 
 	backend.Count = backend.Config.CacheRefresh - 1
+
 	// Clean up our mess
 	backend.Reload(rg)
 	validateRecords(t, backend, 6)
+
+	// Drop cache
+	backend.TaskRecords[slaveid].Current = append(backend.TaskRecords[slaveid].Current, service)
+	backend.Reload(rg)
+	validateRecords(t, backend, 7)
+	// Delete bogus record directly from consul to make our cache broken
+	backend.Agents[LOCALSLAVENAME].ServiceDeregister(service.ID)
+	validateRecords(t, backend, 6)
+	// Expecting 4 records, 3 valid (2x myapp 1x nginx) and 1 invalid ( REMOVEME )
+	if len(backend.TaskRecords[slaveid].Previous) != 4 {
+		t.Error("Cache does not have 4 entries, has", len(backend.TaskRecords[slaveid].Previous))
+	}
+
+	backend.Count = backend.Config.CacheRefresh - 1
+	backend.Reload(rg)
+	validateRecords(t, backend, 6)
+	// Expecting 0 records since we cleared these
+	if len(backend.TaskRecords[slaveid].Previous) != 0 {
+		t.Error("Cache does not have 0 entries, has", len(backend.TaskRecords[slaveid].Previous))
+	}
+
+	backend.Reload(rg)
+	validateRecords(t, backend, 6)
+	// Expecting 3 records, 3 valid (2x myapp 1x nginx)
+	if len(backend.TaskRecords[slaveid].Previous) != 3 {
+		t.Error("Cache does not have 3 entries, has", len(backend.TaskRecords[slaveid].Previous))
+	}
 }
 
 func makeClientServer(t *testing.T) *testutil.TestServer {
@@ -509,5 +537,4 @@ func setupHealthChecks(t *testing.T, backend *ConsulBackend) {
 			t.Error(err)
 		}
 	}
-
 }

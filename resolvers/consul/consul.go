@@ -444,7 +444,7 @@ func (c *ConsulBackend) Cleanup() {
 				}
 			}
 
-			c.RefreshCache(slaveid)
+			c.ClearCache(slaveid)
 
 			wg.Done()
 		}()
@@ -579,8 +579,8 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 	return svcs
 }
 
-// RefreshCache will clear our the internal cache of records causing a new cache to be built
-func (c *ConsulBackend) RefreshCache(slaveid string) {
+// ClearCache will clear out the internal cache of records causing a new cache to be built
+func (c *ConsulBackend) ClearCache(slaveid string) {
 	if c.Count%c.Config.CacheRefresh != 0 {
 		return
 	}
