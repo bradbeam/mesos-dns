@@ -392,24 +392,13 @@ func (c *ConsulBackend) Cleanup() {
 			services := []*capi.AgentServiceRegistration{}
 			currentservices := []*capi.AgentServiceRegistration{}
 
-			// May not have any records for specific slave
-			if _, ok := c.MesosRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.MesosRecords[slaveid].Current, c.MesosRecords[slaveid].Previous)...)
-				currentservices = append(currentservices, c.MesosRecords[slaveid].Current...)
-				c.MesosRecords[slaveid].Previous = c.MesosRecords[slaveid].Current
-				c.MesosRecords[slaveid].Current = nil
-			}
-			if _, ok := c.FrameworkRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.FrameworkRecords[slaveid].Current, c.FrameworkRecords[slaveid].Previous)...)
-				currentservices = append(currentservices, c.FrameworkRecords[slaveid].Current...)
-				c.FrameworkRecords[slaveid].Previous = c.FrameworkRecords[slaveid].Current
-				c.FrameworkRecords[slaveid].Current = nil
-			}
-			if _, ok := c.TaskRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.TaskRecords[slaveid].Current, c.TaskRecords[slaveid].Previous)...)
-				currentservices = append(currentservices, c.TaskRecords[slaveid].Current...)
-				c.TaskRecords[slaveid].Previous = c.TaskRecords[slaveid].Current
-				c.TaskRecords[slaveid].Current = nil
+			for _, records := range []map[string]*ConsulRecords{c.MesosRecords, c.FrameworkRecords, c.TaskRecords} {
+				if recordGroup, ok := records[slaveid]; ok {
+					services = append(services, getDeltaServices(recordGroup.Current, recordGroup.Previous)...)
+					currentservices = append(currentservices, recordGroup.Current...)
+					recordGroup.Previous = recordGroup.Current
+					recordGroup.Current = nil
+				}
 			}
 
 			services = append(services, getDeltaServices(currentservices, c.getServices(agentid))...)
@@ -563,6 +552,7 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 
 	// Reset the counter so we dont overflow
 	c.Count = 0
+
 	services, err := c.Agents[agentid].Services()
 	if err != nil {
 		logging.Error.Println("Failed to get list of services from consul@", agentid, ".", err)
