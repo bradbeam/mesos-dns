@@ -3,7 +3,6 @@ package consul
 import (
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -392,24 +391,13 @@ func (c *ConsulBackend) Cleanup() {
 			services := []*capi.AgentServiceRegistration{}
 			currentservices := []*capi.AgentServiceRegistration{}
 
-			// May not have any records for specific slave
-			if _, ok := c.MesosRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.MesosRecords[slaveid].Current, c.MesosRecords[slaveid].Previous)...)
-				currentservices = append(currentservices, c.MesosRecords[slaveid].Current...)
-				c.MesosRecords[slaveid].Previous = c.MesosRecords[slaveid].Current
-				c.MesosRecords[slaveid].Current = nil
-			}
-			if _, ok := c.FrameworkRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.FrameworkRecords[slaveid].Current, c.FrameworkRecords[slaveid].Previous)...)
-				currentservices = append(currentservices, c.FrameworkRecords[slaveid].Current...)
-				c.FrameworkRecords[slaveid].Previous = c.FrameworkRecords[slaveid].Current
-				c.FrameworkRecords[slaveid].Current = nil
-			}
-			if _, ok := c.TaskRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.TaskRecords[slaveid].Current, c.TaskRecords[slaveid].Previous)...)
-				currentservices = append(currentservices, c.TaskRecords[slaveid].Current...)
-				c.TaskRecords[slaveid].Previous = c.TaskRecords[slaveid].Current
-				c.TaskRecords[slaveid].Current = nil
+			for _, records := range []map[string]*ConsulRecords{c.MesosRecords, c.FrameworkRecords, c.TaskRecords} {
+				if recordGroup, ok := records[slaveid]; ok {
+					services = append(services, getDeltaServices(recordGroup.Current, recordGroup.Previous)...)
+					currentservices = append(currentservices, recordGroup.Current...)
+					recordGroup.Previous = recordGroup.Current
+					recordGroup.Current = nil
+				}
 			}
 
 			services = append(services, getDeltaServices(currentservices, c.getServices(agentid))...)
@@ -455,6 +443,9 @@ func (c *ConsulBackend) Cleanup() {
 					}
 				}
 			}
+
+			c.ClearCache(slaveid)
+
 			wg.Done()
 		}()
 		wg.Wait()
@@ -561,8 +552,6 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 		return svcs
 	}
 
-	// Reset the counter so we dont overflow
-	c.Count = 0
 	services, err := c.Agents[agentid].Services()
 	if err != nil {
 		logging.Error.Println("Failed to get list of services from consul@", agentid, ".", err)
@@ -590,131 +579,17 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 	return svcs
 }
 
-func createService(id string, name string, address string, port int, tags []string) *capi.AgentServiceRegistration {
-	// Format the name appropriately
-	reg, err := regexp.Compile("[^\\w-]")
-	if err != nil {
-		logging.Error.Println(err)
-		return &capi.AgentServiceRegistration{}
+// ClearCache will clear out the internal cache of records causing a new cache to be built
+func (c *ConsulBackend) ClearCache(slaveid string) {
+	if c.Count%c.Config.CacheRefresh != 0 {
+		return
 	}
 
-	s := reg.ReplaceAllString(name, "-")
+	// Reset the counter so we dont overflow
+	c.Count = 0
 
-	asr := &capi.AgentServiceRegistration{
-		ID:      id,
-		Name:    strings.ToLower(strings.Replace(s, "_", "", -1)),
-		Address: address,
-		Tags:    tags,
-	}
-	if port > 0 {
-		asr.Port = port
-	}
-
-	return asr
-}
-
-func compareService(newservice *capi.AgentServiceRegistration, oldservice *capi.AgentServiceRegistration) bool {
-	// Do this explicitly cause #grumpyface
-	if newservice.ID != oldservice.ID {
-		return false
-	}
-	if newservice.Name != oldservice.Name {
-		return false
-	}
-	if newservice.Address != oldservice.Address {
-		return false
-	}
-	if newservice.Port != oldservice.Port {
-		return false
-	}
-	if len(newservice.Tags) != len(oldservice.Tags) {
-		return false
-	}
-
-	for _, otag := range oldservice.Tags {
-		found := false
-		for _, ntag := range newservice.Tags {
-			if otag == ntag {
-				found = true
-			}
-		}
-
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-func compareCheck(newcheck *capi.AgentCheckRegistration, oldcheck *capi.AgentCheckRegistration) bool {
-	if newcheck.ID != oldcheck.ID {
-		return false
-	}
-	if newcheck.Name != oldcheck.Name {
-		return false
-	}
-	if newcheck.ServiceID != oldcheck.ServiceID {
-		return false
-	}
-	if newcheck.AgentServiceCheck != oldcheck.AgentServiceCheck {
-		return false
-	}
-	return true
-}
-
-func getDeltaServices(oldservices []*capi.AgentServiceRegistration, newservices []*capi.AgentServiceRegistration) []*capi.AgentServiceRegistration {
-	delta := []*capi.AgentServiceRegistration{}
-	// Need to compare current vs old
-	for _, service := range newservices {
-		found := false
-		for _, existing := range oldservices {
-			if compareService(service, existing) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			delta = append(delta, service)
-		}
-	}
-	return delta
-}
-
-func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.AgentCheckRegistration, context string) []*capi.AgentCheckRegistration {
-	delta := []*capi.AgentCheckRegistration{}
-	for _, newhc := range newchecks {
-		found := false
-		for _, oldhc := range oldchecks {
-			if compareCheck(newhc, oldhc) {
-				found = true
-				break
-			}
-			// We add this context key in here to know how to react to IDs that are the same
-			// In a registration/add case, we want to update the healthcheck if it is different
-			// even if it uses the same ID
-			// In a deregistration/purge case, we want to leave the healthcheck alone if the IDs are
-			// the same but the content differs. This is so we don't remove a newly updated healthcheck
-			// that uses the same ID as the old one
-			if context == "purge" {
-				if newhc.ID == oldhc.ID {
-					found = true
-					break
-				}
-			}
-		}
-		if !found {
-			delta = append(delta, newhc)
-		}
-	}
-	return delta
-}
-
-func evalVars(check *string, address string, port int) bool {
-	if strings.Contains(*check, "{PORT}") && port == 0 {
-		logging.Error.Println("Invalid port for substitution in healthcheck", *check, port)
-		return false
-	}
-	*check = strings.Replace(*check, "{IP}", address, -1)
-	*check = strings.Replace(*check, "{PORT}", strconv.Itoa(port), -1)
-	return true
+	// Clear our existing caches
+	c.MesosRecords[slaveid].Previous = nil
+	c.FrameworkRecords[slaveid].Previous = nil
+	c.TaskRecords[slaveid].Previous = nil
 }
