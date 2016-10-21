@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
@@ -100,14 +101,6 @@ func (c *ConsulBackend) Reload(rg *records.RecordGenerator) {
 	// Get a snapshot of state.json
 	c.State = rg.State
 
-	// Get agent members
-	// and initialize client connections
-	err := c.connectAgents()
-	if err != nil {
-		logging.Error.Println("Failed to connect to consul agent", err)
-		return
-	}
-
 	// Generate all of the necessary records
 	c.generateMesosRecords()
 	c.generateFrameworkRecords()
@@ -120,50 +113,6 @@ func (c *ConsulBackend) Reload(rg *records.RecordGenerator) {
 
 	// Clean up old/orphaned records
 	c.Cleanup()
-}
-
-func (c *ConsulBackend) connectAgents() error {
-	// Only get LAN members
-	members, err := c.Client.Agent().Members(false)
-	if err != nil {
-		// Do something
-		return err
-	}
-
-	for _, agent := range members {
-		logging.VeryVerbose.Println("Connecting to consul agent", agent)
-		// Test connection to each agent and reconnect as needed
-		if _, ok := c.Agents[agent.Addr]; ok {
-			_, err := c.Agents[agent.Addr].Self()
-			if err == nil {
-				logging.VeryVerbose.Println("Connected to consul agent", agent)
-				continue
-			}
-		}
-		cfg := capi.DefaultConfig()
-		cfg.Address = agent.Addr + ":" + c.AgentPort
-		cfg.Datacenter = c.Config.Datacenter
-		cfg.Scheme = c.Config.Scheme
-		cfg.Token = c.Config.Token
-
-		client, err := capi.NewClient(cfg)
-		if err != nil {
-			// How do we want to handle consul agent not being responsive
-			return err
-		}
-
-		// Do a sanity check that we are connected to agent
-		_, err = client.Agent().Self()
-		if err != nil {
-			// Dump agent?
-			return err
-		}
-
-		c.Agents[agent.Name] = client.Agent()
-		logging.VeryVerbose.Println("Connected to consul agent", agent)
-	}
-
-	return nil
 }
 
 func (c *ConsulBackend) generateMesosRecords() {
@@ -327,12 +276,21 @@ func (c *ConsulBackend) Register() {
 
 	var wg sync.WaitGroup
 
-	for agentid, _ := range c.Agents {
-		// Launch a goroutine per agent
-		slaveid := c.SlaveHostnameID[agentid]
+	for tempslaveid, tempslaveip := range c.SlaveIDIP {
+		// <3 concurrency bro
+		slaveid := tempslaveid
+		slaveip := tempslaveip
 
+		// Launch a goroutine per agent
 		wg.Add(1)
 		go func() {
+			consulAgent, err := c.ConnectToAgentByIP(slaveip)
+			if consulAgent == nil || err != nil {
+				logging.Error.Println("Failed to connect to consul agent at:"+slaveip, err)
+				wg.Done()
+				return
+			}
+
 			services := []*capi.AgentServiceRegistration{}
 
 			// May not have any records for specific slave
@@ -347,9 +305,9 @@ func (c *ConsulBackend) Register() {
 			}
 
 			for _, service := range services {
-				err := c.Agents[agentid].ServiceRegister(service)
+				err := consulAgent.ServiceRegister(service)
 				if err != nil {
-					logging.Error.Println("Failed to register service", service.ID, "on agent", agentid, ". Error:", err)
+					logging.Error.Println("Failed to register service", service.ID, "on agent", slaveip, ". Error:", err)
 					continue
 				}
 
@@ -367,7 +325,7 @@ func (c *ConsulBackend) Register() {
 
 			for _, hc := range checks {
 				logging.VeryVerbose.Println("Registering check", hc.Name, "for service", hc.ServiceID)
-				err := c.Agents[agentid].CheckRegister(hc)
+				err := consulAgent.CheckRegister(hc)
 				if err != nil {
 					logging.Error.Println("Failed to register healthcheck for service", hc.ServiceID, ". Error:", err)
 					continue
@@ -375,19 +333,27 @@ func (c *ConsulBackend) Register() {
 			}
 			wg.Done()
 		}()
-		wg.Wait()
 	}
+	wg.Wait()
 }
 
 func (c *ConsulBackend) Cleanup() {
 
 	var wg sync.WaitGroup
 
-	for agentid, _ := range c.Agents {
+	for tempslaveid, tempslaveip := range c.SlaveIDIP {
+		slaveid := tempslaveid
+		slaveip := tempslaveip
 		// Launch a goroutine per agent
-		slaveid := c.SlaveHostnameID[agentid]
 		wg.Add(1)
 		go func() {
+			consulAgent, err := c.ConnectToAgentByIP(slaveip)
+			if err != nil {
+				logging.Error.Println("Failed to connect to consul agent at:"+slaveip, err)
+				wg.Done()
+				return
+			}
+
 			services := []*capi.AgentServiceRegistration{}
 			currentservices := []*capi.AgentServiceRegistration{}
 
@@ -400,13 +366,13 @@ func (c *ConsulBackend) Cleanup() {
 				}
 			}
 
-			services = append(services, getDeltaServices(currentservices, c.getServices(agentid))...)
+			services = append(services, getDeltaServices(currentservices, c.getServices(slaveip, consulAgent))...)
 
 			for _, service := range services {
-				logging.VeryVerbose.Println("Removing service", service.ID, "on agent", agentid)
-				err := c.Agents[agentid].ServiceDeregister(service.ID)
+				logging.VeryVerbose.Println("Removing service", service.ID, "on agent", slaveip)
+				err := consulAgent.ServiceDeregister(service.ID)
 				if err != nil {
-					logging.Verbose.Println("Failed to deregister service", service.ID, "on agent", agentid, ". Falling back to catalog deregistration.")
+					logging.Verbose.Println("Failed to deregister service", service.ID, "on agent", slaveip, ". Falling back to catalog deregistration.")
 					logging.Error.Println("Error:", err)
 					dereg := &capi.CatalogDeregistration{
 						Node:      c.SlaveIDHostname[slaveid],
@@ -428,9 +394,9 @@ func (c *ConsulBackend) Cleanup() {
 
 			for _, hc := range checks {
 				logging.VeryVerbose.Println("Removing", hc.ID)
-				err := c.Agents[agentid].CheckDeregister(hc.ID)
+				err := consulAgent.CheckDeregister(hc.ID)
 				if err != nil {
-					logging.Verbose.Println("Failed to deregister check", hc.ID, "on agent", agentid, " . Falling back to catalog deregistration.")
+					logging.Verbose.Println("Failed to deregister check", hc.ID, "on agent", slaveip, " . Falling back to catalog deregistration.")
 					logging.Error.Println("Error:", err)
 					dereg := &capi.CatalogDeregistration{
 						Node:    c.SlaveIDHostname[slaveid],
@@ -448,8 +414,8 @@ func (c *ConsulBackend) Cleanup() {
 
 			wg.Done()
 		}()
-		wg.Wait()
 	}
+	wg.Wait()
 }
 
 func (c *ConsulBackend) getAddress(task state.Task) string {
@@ -542,7 +508,7 @@ func (c *ConsulBackend) getHealthChecks(task state.Task, id string, address stri
 
 }
 
-func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistration {
+func (c *ConsulBackend) getServices(agentid string, consulAgent *capi.Agent) []*capi.AgentServiceRegistration {
 	svcs := []*capi.AgentServiceRegistration{}
 	if c.Config.CacheOnly {
 		return svcs
@@ -552,7 +518,7 @@ func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistra
 		return svcs
 	}
 
-	services, err := c.Agents[agentid].Services()
+	services, err := consulAgent.Services()
 	if err != nil {
 		logging.Error.Println("Failed to get list of services from consul@", agentid, ".", err)
 		return svcs
@@ -592,4 +558,32 @@ func (c *ConsulBackend) ClearCache(slaveid string) {
 	c.MesosRecords[slaveid].Previous = nil
 	c.FrameworkRecords[slaveid].Previous = nil
 	c.TaskRecords[slaveid].Previous = nil
+}
+
+// ConnectToAgentByIP will connect to a consul agent by IP address
+func (c *ConsulBackend) ConnectToAgentByIP(ip string) (*capi.Agent, error) {
+	cfg := capi.DefaultConfig()
+	cfg.Address = ip + ":" + c.AgentPort
+	cfg.Datacenter = c.Config.Datacenter
+	cfg.Scheme = c.Config.Scheme
+	cfg.Token = c.Config.Token
+	cfg.HttpClient.Timeout = time.Second * time.Duration(c.Refresh)
+
+	client, err := capi.NewClient(cfg)
+	if err != nil {
+		logging.VeryVerbose.Println("Failed creating new client for", cfg.Address)
+		// How do we want to handle consul agent not being responsive
+		return nil, err
+	}
+
+	// Do a sanity check that we are connected to agent
+	_, err = client.Agent().Self()
+	if err != nil {
+		logging.VeryVerbose.Println("Failed getting self for", cfg.Address)
+		// Dump agent?
+		return nil, err
+	}
+
+	logging.VeryVerbose.Println("Connected to consul agent at ", ip)
+	return client.Agent(), nil
 }

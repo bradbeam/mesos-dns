@@ -23,24 +23,6 @@ func TestNew(t *testing.T) {
 	defer server.Stop()
 }
 
-func TestConnectAgents(t *testing.T) {
-	server, backend := recordSetup(t)
-	defer server.Stop()
-
-	// Let's see what happens the second time
-	// It should just return early since the agent already
-	// exists in our list of agents
-	err := backend.connectAgents()
-	if err != nil {
-		t.Log(err)
-	}
-
-	if len(backend.Agents) != 1 {
-		t.Error("Failed to get agent connection")
-	}
-
-}
-
 func TestMesosRecords(t *testing.T) {
 	server, backend := recordSetup(t)
 	defer server.Stop()
@@ -184,7 +166,17 @@ func TestCleanupRecords(t *testing.T) {
 	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
 
 	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.2", 0, []string{})
-	err := backend.Agents[LOCALSLAVENAME].ServiceRegister(service)
+
+	consulAgent, err := backend.ConnectToAgentByIP(LOCALSLAVEIP)
+	if consulAgent == nil || err != nil {
+		if consulAgent == nil {
+			t.Log("consulAgent is nil")
+		}
+		t.Error("Failed to connect to consul agent", err)
+		return
+	}
+
+	err = consulAgent.ServiceRegister(service)
 	if err != nil {
 		t.Error("Failed to create bogus service", err)
 	}
@@ -204,7 +196,8 @@ func TestCleanupRecords(t *testing.T) {
 		ServiceID:         "mesos-dns:mesosslave-r02-s02:nginx-no-port.4266d369-b9a7-11e5-b2bb-0242d4d0a230",
 		AgentServiceCheck: capi.AgentServiceCheck{TTL: "500s"},
 	}
-	err = backend.Agents[LOCALSLAVENAME].CheckRegister(hc)
+
+	err = consulAgent.CheckRegister(hc)
 	if err != nil {
 		t.Error("Failed to create bogus healthcheck", err)
 	}
@@ -232,8 +225,6 @@ func TestCleanupRecords(t *testing.T) {
 		t.Error(err)
 	}
 
-	//err = backend.Agents[LOCALSLAVENAME].CheckRegister(nport)
-	//t.Log(backend.Agents[LOCALSLAVENAME].Health().Checks("nginx-no-port", nil))
 	backend.Reload(rg)
 	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
 	backend.Reload(rg)
@@ -307,8 +298,18 @@ func TestCache(t *testing.T) {
 	backend.TaskRecords[slaveid].Current = append(backend.TaskRecords[slaveid].Current, service)
 	backend.Reload(rg)
 	validateRecords(t, backend, 7)
+
 	// Delete bogus record directly from consul to make our cache broken
-	backend.Agents[LOCALSLAVENAME].ServiceDeregister(service.ID)
+	consulAgent, err := backend.ConnectToAgentByIP(LOCALSLAVEIP)
+	if consulAgent == nil || err != nil {
+		if consulAgent == nil {
+			t.Log("consulAgent is nil")
+		}
+		t.Error("Failed to connect to consul agent", err)
+		return
+	}
+	consulAgent.ServiceDeregister(service.ID)
+
 	validateRecords(t, backend, 6)
 	// Expecting 4 records, 3 valid (2x myapp 1x nginx) and 1 invalid ( REMOVEME )
 	if len(backend.TaskRecords[slaveid].Previous) != 4 {
@@ -373,13 +374,14 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	errch := make(chan error)
 	version := "1.0"
 
-	// Initialize logger
+	// Initialize logger Debug
 	//logging.VeryVerboseFlag = true
 	logging.SetupLogs()
 
 	// Create empty RecordGenerator
 	conf := records.NewConfig()
 	conf.StateTimeoutSeconds = 300
+	conf.RefreshSeconds = 1
 	rg := records.NewRecordGenerator(conf)
 
 	// Hopefully the ENV vars above should allow us
@@ -396,10 +398,6 @@ func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	sj := loadState(t)
 
 	server, backend := backendSetup(t)
-	err := backend.connectAgents()
-	if err != nil {
-		t.Error("Issue connecting to agents.", err)
-	}
 
 	// :D
 	// Do this for testing so we can have
@@ -418,8 +416,21 @@ func recordSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 }
 
 func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
-	for _, agent := range backend.Agents {
-		services, err := agent.Services()
+	for _, slaveip := range backend.SlaveIDIP {
+		if slaveip != LOCALSLAVEIP {
+			continue
+		}
+
+		consulAgent, err := backend.ConnectToAgentByIP(slaveip)
+		if consulAgent == nil || err != nil {
+			if consulAgent == nil {
+				t.Log("consulAgent is nil")
+			}
+			t.Error("Failed to connect to consul agent", err)
+			return
+		}
+
+		services, err := consulAgent.Services()
 		if err != nil {
 			t.Error("Unable to get list of services back from agent.", err)
 			return
@@ -429,7 +440,7 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 			t.Error("Did not get back", expected, "services. Got back", len(services))
 			t.Error("Services:")
 			for k, info := range services {
-				t.Error(" -", k, "=>", info.Address)
+				t.Error(" -", k, "=>", info)
 			}
 		}
 
@@ -447,18 +458,25 @@ func validateRecords(t *testing.T, backend *ConsulBackend, expected int) {
 }
 
 func validateChecks(t *testing.T, backend *ConsulBackend, expected int) {
-	for _, agent := range backend.Agents {
-		checks, err := agent.Checks()
-		if err != nil {
-			t.Error(err)
+	consulAgent, err := backend.ConnectToAgentByIP(LOCALSLAVEIP)
+	if consulAgent == nil || err != nil {
+		if consulAgent == nil {
+			t.Log("consulAgent is nil")
 		}
+		t.Error("Failed to connect to consul agent", err)
+		return
+	}
 
-		if len(checks) != expected {
-			t.Error("Did not get back", expected, "checks. Got back", len(checks))
-			t.Error("Checks:")
-			for k, info := range checks {
-				t.Error(" -", k, "=>", info.ServiceID)
-			}
+	checks, err := consulAgent.Checks()
+	if err != nil {
+		t.Error(err)
+	}
+
+	if len(checks) != expected {
+		t.Error("Did not get back", expected, "checks. Got back", len(checks))
+		t.Error("Checks:")
+		for k, info := range checks {
+			t.Error(" -", k, "=>", info.ServiceID)
 		}
 	}
 }
@@ -503,7 +521,6 @@ func validateHealthRecords(t *testing.T, records []*capi.AgentCheckRegistration,
 			}
 		}
 	}
-
 }
 
 func setupHealthChecks(t *testing.T, backend *ConsulBackend) {
