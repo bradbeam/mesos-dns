@@ -5328,6 +5328,96 @@
                 {
                     "executor_id": "",
                     "framework_id": "20160107-001256-134875658-5050-27524-0000",
+                    "id": "nginx-calico.12341234-1245-11e5-b2bb-0242d4d0a230",
+                    "labels": [
+                        {
+                            "key": "environment",
+                            "value": "prod"
+                        },
+                        {
+                            "key": "ConsulHealthCheckKeys",
+                            "value": "nginx/port,nginx/http"
+                        },
+                        {
+                            "key": "CALICO_IP",
+                            "value": "127.0.1.0/24"
+                        },
+                        {
+                            "key": "CALICO_PROFILE",
+                            "value": "nginx"
+                        }
+                    ],
+                    "name": "nginx-calico",
+                    "resources": {
+                        "cpus": 1,
+                        "disk": 0,
+                        "mem": 128
+                    },
+                    "slave_id": "20160107-001256-134875658-5050-27524-S3",
+                    "state": "TASK_RUNNING",
+                    "statuses": [
+                        {
+                            "labels": [
+                                {
+                                    "key": "Docker.NetworkSettings.IPAddress",
+                                    "value": ""
+                                },
+                                {
+                                    "key": "CalicoDocker.NetworkSettings.IPAddress",
+                                    "value": "127.0.1.1"
+                                }
+                            ],
+                            "state": "TASK_RUNNING",
+                            "timestamp": 1452656391.82708
+                        }
+                    ]
+                },
+                {
+                    "executor_id": "",
+                    "framework_id": "20160107-001256-134875658-5050-27524-0000",
+                    "id": "nginx-calico-notready.12341234-1245-11e5-b2bb-0242d4d0a230",
+                    "labels": [
+                        {
+                            "key": "environment",
+                            "value": "prod"
+                        },
+                        {
+                            "key": "ConsulHealthCheckKeys",
+                            "value": "nginx/port,nginx/http"
+                        },
+                        {
+                            "key": "CALICO_IP",
+                            "value": "127.0.1.0/24"
+                        },
+                        {
+                            "key": "CALICO_PROFILE",
+                            "value": "nginx"
+                        }
+                    ],
+                    "name": "nginx-calico-notready",
+                    "resources": {
+                        "cpus": 1,
+                        "disk": 0,
+                        "mem": 128
+                    },
+                    "slave_id": "20160107-001256-134875658-5050-27524-S3",
+                    "state": "TASK_RUNNING",
+                    "statuses": [
+                        {
+                            "labels": [
+                                {
+                                    "key": "Docker.NetworkSettings.IPAddress",
+                                    "value": ""
+                                }
+                            ],
+                            "state": "TASK_RUNNING",
+                            "timestamp": 1452656391.82708
+                        }
+                    ]
+                },
+                {
+                    "executor_id": "",
+                    "framework_id": "20160107-001256-134875658-5050-27524-0000",
                     "id": "nginx.2a8898a8-b9a7-11e5-b2bb-0242d4d0a230",
                     "labels": [],
                     "name": "nginx",
