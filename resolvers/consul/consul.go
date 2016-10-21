@@ -73,13 +73,16 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	// the initially specified consul server
 	port := strings.Split(config.Address, ":")[1]
 
+	ipsources := rg.Config.IPSources
+	ipsources = append(ipsources, "fallback")
+
 	return &ConsulBackend{
 		Agents:           make(map[string]*capi.Agent),
 		AgentPort:        port,
 		Client:           client,
 		Config:           config,
 		Count:            0,
-		IPSources:        rg.Config.IPSources,
+		IPSources:        ipsources,
 		Refresh:          rg.Config.RefreshSeconds,
 		ServicePrefix:    "mesos-dns",
 		SlaveIDIP:        make(map[string]string),
@@ -282,8 +285,17 @@ func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
 		if task.State != "TASK_RUNNING" {
 			continue
 		}
-		// Might be able to use task.SlaveIP, but in testing this returns ""
+
+		// Discover task IP
 		address := c.getAddress(task)
+
+		// Determine if we need to ignore the task because there is no appropriate IP
+		switch address {
+		case "CALICO_SKIP":
+			continue
+		case "":
+			continue
+		}
 
 		// Make sure we've got everything initialized
 		if _, ok := c.TaskRecords[task.SlaveID]; !ok {
@@ -470,20 +482,29 @@ func (c *ConsulBackend) getAddress(task state.Task) string {
 			if len(lookupkey) != 2 {
 				logging.Error.Fatal("Lookup order label is not in proper format `label:labelname`")
 			}
+
 			addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
 			if len(addresses) > 0 {
 				address = addresses[0]
 			}
+
+			// CUSTOM
+			// Since we add the calicodocker label after the container has started up, we'll need to do
+			// an additional check to see if we need to wait for the calico label
+			if address == "" && lookupkey[1] == "CalicoDocker.NetworkSettings.IPAddress" {
+				for _, taskLabel := range task.Labels {
+					if taskLabel.Key == "CALICO_IP" {
+						return "CALICO_SKIP"
+					}
+				}
+			}
+		case "fallback":
+			address = c.SlaveIDIP[task.SlaveID]
 		}
 
 		if address != "" {
 			break
 		}
-	}
-
-	// If still empty, set to host IP
-	if address == "" {
-		address = c.SlaveIDIP[task.SlaveID]
 	}
 
 	return address
