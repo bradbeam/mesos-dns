@@ -98,7 +98,7 @@ func TestTaskRecords(t *testing.T) {
 	// Each slave can have a different number of tasks running
 	expected := map[string]int{
 		"20160107-001256-134875658-5050-27524-S66": 3,
-		LOCALSLAVEID:                               3,
+		LOCALSLAVEID:                               4,
 		"20160107-001256-134875658-5050-27524-S1":  3,
 		"20160107-001256-134875658-5050-27524-S2":  2,
 		"20160107-001256-134875658-5050-27524-S0":  2,
@@ -126,7 +126,7 @@ func TestHealthchecks(t *testing.T) {
 	// Each slave can have a different number of tasks running
 	expected := map[string]int{
 		"20160107-001256-134875658-5050-27524-S66": 3,
-		LOCALSLAVEID:                               3,
+		LOCALSLAVEID:                               4,
 		"20160107-001256-134875658-5050-27524-S1":  3,
 		"20160107-001256-134875658-5050-27524-S2":  2,
 		"20160107-001256-134875658-5050-27524-S0":  2,
@@ -134,8 +134,8 @@ func TestHealthchecks(t *testing.T) {
 
 	// 5 Records ( 5x slaves )
 	validateStateRecords(t, backend.TaskRecords, 5, expected)
-	// 2 healthchecks
-	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Current, 2)
+	// 4 healthchecks
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Current, 4)
 }
 
 func TestRegister(t *testing.T) {
@@ -167,8 +167,8 @@ func TestRegister(t *testing.T) {
 	}
 	backend.Register()
 
-	// 6 Records ( 2x myapp, 1x nginx, 1x marathon, 1x slave, 1x consul )
-	validateRecords(t, backend, 6)
+	// 6 Records ( 2x myapp, 2x nginx, 1x marathon, 1x slave, 1x consul )
+	validateRecords(t, backend, 7)
 
 }
 
@@ -180,15 +180,15 @@ func TestCleanupRecords(t *testing.T) {
 
 	rg := &records.RecordGenerator{State: backend.State}
 	backend.Reload(rg)
-	validateRecords(t, backend, 6)
-	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
+	validateRecords(t, backend, 7)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 4)
 
 	service := createService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.2", 0, []string{})
 	err := backend.Agents[LOCALSLAVENAME].ServiceRegister(service)
 	if err != nil {
 		t.Error("Failed to create bogus service", err)
 	}
-	validateRecords(t, backend, 7)
+	validateRecords(t, backend, 8)
 
 	slaveid := backend.SlaveHostnameID[LOCALSLAVENAME]
 	// Add this to previous so when we parse state again,
@@ -196,7 +196,7 @@ func TestCleanupRecords(t *testing.T) {
 	backend.TaskRecords[slaveid].Previous = append(backend.TaskRecords[slaveid].Previous, service)
 
 	backend.Reload(rg)
-	validateRecords(t, backend, 6)
+	validateRecords(t, backend, 7)
 
 	hc := &capi.AgentCheckRegistration{
 		ID:                "REMOVEMECHECK",
@@ -213,7 +213,7 @@ func TestCleanupRecords(t *testing.T) {
 	backend.Reload(rg)
 
 	// Need to do some sort of validation for ^
-	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 4)
 
 	// Test for updating existing HC
 	kv := backend.Client.KV()
@@ -235,9 +235,9 @@ func TestCleanupRecords(t *testing.T) {
 	//err = backend.Agents[LOCALSLAVENAME].CheckRegister(nport)
 	//t.Log(backend.Agents[LOCALSLAVENAME].Health().Checks("nginx-no-port", nil))
 	backend.Reload(rg)
-	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 4)
 	backend.Reload(rg)
-	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 2)
+	validateHealthRecords(t, backend.HealthChecks[LOCALSLAVEID].Previous, 4)
 }
 
 func TestCache(t *testing.T) {
@@ -252,8 +252,8 @@ func TestCache(t *testing.T) {
 	rg := &records.RecordGenerator{State: backend.State}
 	backend.Reload(rg)
 
-	// 6 Records ( 2x myapp, 1x nginx, 1x marathon, 1x slave, 1x consul )
-	validateRecords(t, backend, 6)
+	// 6 Records ( 2x myapp, 2x nginx, 1x marathon, 1x slave, 1x consul )
+	validateRecords(t, backend, 7)
 
 	// Save us uglyness later
 	slaveid := backend.SlaveHostnameID[LOCALSLAVENAME]
@@ -290,7 +290,7 @@ func TestCache(t *testing.T) {
 
 	// Go ahead and register our new service
 	backend.Register()
-	validateRecords(t, backend, 7)
+	validateRecords(t, backend, 8)
 
 	// Restore our saved previous information
 	// so we can essentiall orphan `service`
@@ -301,33 +301,33 @@ func TestCache(t *testing.T) {
 
 	// Clean up our mess
 	backend.Reload(rg)
-	validateRecords(t, backend, 6)
+	validateRecords(t, backend, 7)
 
 	// Drop cache
 	backend.TaskRecords[slaveid].Current = append(backend.TaskRecords[slaveid].Current, service)
 	backend.Reload(rg)
-	validateRecords(t, backend, 7)
+	validateRecords(t, backend, 8)
 	// Delete bogus record directly from consul to make our cache broken
 	backend.Agents[LOCALSLAVENAME].ServiceDeregister(service.ID)
-	validateRecords(t, backend, 6)
-	// Expecting 4 records, 3 valid (2x myapp 1x nginx) and 1 invalid ( REMOVEME )
-	if len(backend.TaskRecords[slaveid].Previous) != 4 {
-		t.Error("Cache does not have 4 entries, has", len(backend.TaskRecords[slaveid].Previous))
+	validateRecords(t, backend, 7)
+	// Expecting 4 records, 3 valid (2x myapp 2x nginx) and 1 invalid ( REMOVEME )
+	if len(backend.TaskRecords[slaveid].Previous) != 5 {
+		t.Error("Cache does not have 5 entries, has", len(backend.TaskRecords[slaveid].Previous))
 	}
 
 	backend.Count = backend.Config.CacheRefresh - 1
 	backend.Reload(rg)
-	validateRecords(t, backend, 6)
+	validateRecords(t, backend, 7)
 	// Expecting 0 records since we cleared these
 	if len(backend.TaskRecords[slaveid].Previous) != 0 {
 		t.Error("Cache does not have 0 entries, has", len(backend.TaskRecords[slaveid].Previous))
 	}
 
 	backend.Reload(rg)
-	validateRecords(t, backend, 6)
-	// Expecting 3 records, 3 valid (2x myapp 1x nginx)
-	if len(backend.TaskRecords[slaveid].Previous) != 3 {
-		t.Error("Cache does not have 3 entries, has", len(backend.TaskRecords[slaveid].Previous))
+	validateRecords(t, backend, 7)
+	// Expecting 3 records, 3 valid (2x myapp 2x nginx)
+	if len(backend.TaskRecords[slaveid].Previous) != 4 {
+		t.Error("Cache does not have 4 entries, has", len(backend.TaskRecords[slaveid].Previous))
 	}
 }
 
@@ -389,6 +389,9 @@ func backendSetup(t *testing.T) (*testutil.TestServer, *ConsulBackend) {
 	if err != nil {
 		t.Error("Failed to get consul client initialized")
 	}
+
+	// Overwrite config to check against all IP discovery methods
+	backend.IPSources = []string{"netinfo", "mesos", "host", "docker", "label:CalicoDocker.NetworkSettings.IPAddress", "fallback"}
 	return server, backend
 }
 
@@ -497,8 +500,8 @@ func validateHealthRecords(t *testing.T, records []*capi.AgentCheckRegistration,
 	}
 
 	for _, info := range records {
-		if info.Name == "nginx/port" {
-			if strings.Split(info.AgentServiceCheck.TCP, ":")[0] != "127.0.0.1" {
+		if info.ID == "nginx/port:mesos-dns:mesosslave-r02-s02:nginx-calico.12341234-1245-11e5-b2bb-0242d4d0a230" {
+			if strings.Split(info.AgentServiceCheck.TCP, ":")[0] != "127.0.1.1" {
 				t.Errorf("IP Substitution did not work %+v", info)
 			}
 		}
