@@ -607,7 +607,14 @@ func (c *ConsulBackend) ClearCache(slaveid string) {
 	c.Count = 0
 
 	// Clear our existing caches
-	c.MesosRecords[slaveid].Previous = nil
-	c.FrameworkRecords[slaveid].Previous = nil
-	c.TaskRecords[slaveid].Previous = nil
+	logging.VeryVerbose.Println("Clearing previous record cache for slaveid", slaveid)
+	if _, ok := c.MesosRecords[slaveid]; ok {
+		c.MesosRecords[slaveid].Previous = nil
+	}
+	if _, ok := c.FrameworkRecords[slaveid]; ok {
+		c.FrameworkRecords[slaveid].Previous = nil
+	}
+	if _, ok := c.TaskRecords[slaveid]; ok {
+		c.TaskRecords[slaveid].Previous = nil
+	}
 }
