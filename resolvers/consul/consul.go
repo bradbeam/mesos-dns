@@ -2,6 +2,8 @@ package consul
 
 import (
 	"net"
+	"strconv"
+	"time"
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/mesosphere/mesos-dns/logging"
@@ -10,10 +12,21 @@ import (
 
 type Backend struct {
 	Agents    map[string]chan Record
+	Control   map[string]chan struct{}
 	ErrorChan chan error
 }
 
-type Records struct{}
+type Record struct {
+	Address string
+	SlaveID string
+
+	Service *capi.AgentServiceRegistration
+}
+
+type Agent struct {
+	Healthy     bool
+	ConsulAgent *capi.Agent
+}
 
 func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *Backend {
 	addr, port, err := net.SplitHostPort(config.Address)
@@ -32,7 +45,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	members, err := agent.Members(false)
 	if err != nil {
 		errch <- err
-		return
+		return nil
 	}
 
 	backend := &Backend{
@@ -44,18 +57,51 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	for _, member := range members {
 		recordInput := make(chan Record)
 		backend.Agents[member.Addr] = recordInput
-		go consulAgent(recordInput)
+		controlCh := make(chan struct{})
+		go consulAgent(member, config, recordInput, controlCh, errch)
 	}
 
 	return backend
 }
 
-func consulInit(config *Config, addr string, port string, refresh int) *capi.Agent {
-	return &capi.Agent{}
+func consulInit(config *Config, addr string, port string, refresh int) (*capi.Agent, error) {
+	return &capi.Agent{}, nil
 }
 
-func consulAgent(records chan Record) {
+func consulAgent(member *capi.AgentMember, config *Config, records chan Record, control chan struct{}, errch chan error) {
+	count := 0
 
+	agent := &Agent{
+		Healthy: false,
+	}
+
+	for {
+		count += 1
+		if count%(config.CacheRefresh*3) == 0 {
+			if !agent.Healthy {
+				cagent, err := consulInit(config, member.Addr, strconv.Itoa(int(member.Port)), 5)
+				if err != nil {
+					errch <- err
+					continue
+				}
+				agent.Healthy = true
+				agent.ConsulAgent = cagent
+			}
+		}
+
+		select {
+		case record := <-records:
+			// Update Consul
+			if !agent.Healthy {
+				continue
+			}
+			// Will need to flex on record type/action
+			agent.ConsulAgent.ServiceRegister(record.Service)
+		case <-control:
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
 }
 
 func (b *Backend) Reload() {
@@ -63,7 +109,7 @@ func (b *Backend) Reload() {
 	frameworkRecords := make(chan Record)
 	taskRecords := make(chan Record)
 
-	go Dispatch(mesosRecords, frameworkRecords, taskRecords)
+	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
 	go generateMesosRecords(mesosRecords)
 	go generateFrameworkRecords(frameworkRecords)
@@ -71,15 +117,13 @@ func (b *Backend) Reload() {
 
 }
 
-func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks chan Record, errch chan error) {
+func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks chan Record) {
 	consulAgent := make(map[string]chan Record)
 	records := make(map[string][]Record)
 
 	for record := range mesoss {
 		if ch, ok := b.Agents[record.Address]; ok {
-			if agent.Healthy {
-				consulAgent[record.SlaveID] = ch
-			}
+			consulAgent[record.SlaveID] = ch
 		}
 		records[record.SlaveID] = append(records[record.SlaveID], record)
 	}
@@ -102,3 +146,7 @@ func updateConsul(records []Record, agent chan Record) {
 		agent <- record
 	}
 }
+
+func generateMesosRecords(ch chan Record)     {}
+func generateFrameworkRecords(ch chan Record) {}
+func generateTaskRecords(ch chan Record)      {}
