@@ -2,7 +2,7 @@ package consul
 
 import (
 	"net"
-	"strconv"
+	"strings"
 	"time"
 
 	capi "github.com/hashicorp/consul/api"
@@ -50,6 +50,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 
 	backend := &Backend{
 		ErrorChan: errch,
+		Agents:    make(map[string]chan Record),
 	}
 
 	// Iterate through all members and make sure connection is healthy
@@ -65,10 +66,36 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 }
 
 func consulInit(config *Config, addr string, port string, refresh int) (*capi.Agent, error) {
-	return &capi.Agent{}, nil
+	cfg := capi.DefaultConfig()
+	cfg.Address = strings.Join([]string{addr, port}, ":")
+	cfg.Datacenter = config.Datacenter
+	cfg.Scheme = config.Scheme
+	cfg.Token = config.Token
+	cfg.HttpClient.Timeout = time.Second * time.Duration(refresh)
+
+	client, err := capi.NewClient(cfg)
+	if err != nil {
+		logging.Error.Println("Failed to create new consul client for", cfg.Address)
+		return nil, err
+	}
+
+	_, err = client.Agent().Self()
+	if err != nil {
+		logging.Error.Println("Failed getting self for", cfg.Address)
+		return nil, err
+	}
+
+	logging.VeryVerbose.Println("Connected to consul agent", cfg.Address)
+	return client.Agent(), err
 }
 
 func consulAgent(member *capi.AgentMember, config *Config, records chan Record, control chan struct{}, errch chan error) {
+	_, port, err := net.SplitHostPort(config.Address)
+	if err != nil {
+		errch <- err
+		return
+	}
+
 	count := 0
 
 	agent := &Agent{
@@ -76,12 +103,13 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 	}
 
 	for {
-		count += 1
 		if count%(config.CacheRefresh*3) == 0 {
 			if !agent.Healthy {
-				cagent, err := consulInit(config, member.Addr, strconv.Itoa(int(member.Port)), 5)
+				logging.VeryVerbose.Println("Reconnecting to consul at", member.Addr, port)
+				cagent, err := consulInit(config, member.Addr, port, 5)
 				if err != nil {
 					errch <- err
+					time.Sleep(1 * time.Second)
 					continue
 				}
 				agent.Healthy = true
@@ -93,27 +121,33 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 		case record := <-records:
 			// Update Consul
 			if !agent.Healthy {
+				logging.VeryVerbose.Println("Skipping record update because agent isnt healthy")
 				continue
 			}
+
 			// Will need to flex on record type/action
-			agent.ConsulAgent.ServiceRegister(record.Service)
+			err := agent.ConsulAgent.ServiceRegister(record.Service)
+			if err != nil {
+				errch <- err
+			}
 		case <-control:
 			return
-		case <-time.After(1 * time.Second):
+		case <-time.After(5 * time.Second):
+			count += 1
 		}
 	}
 }
 
-func (b *Backend) Reload() {
+func (b *Backend) Reload(rg *records.RecordGenerator) {
 	mesosRecords := make(chan Record)
 	frameworkRecords := make(chan Record)
 	taskRecords := make(chan Record)
 
 	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
-	go generateMesosRecords(mesosRecords)
-	go generateFrameworkRecords(frameworkRecords)
-	go generateTaskRecords(taskRecords)
+	go generateMesosRecords(mesosRecords, rg)
+	go generateFrameworkRecords(frameworkRecords, rg)
+	go generateTaskRecords(taskRecords, rg)
 
 }
 
@@ -147,6 +181,6 @@ func updateConsul(records []Record, agent chan Record) {
 	}
 }
 
-func generateMesosRecords(ch chan Record)     {}
-func generateFrameworkRecords(ch chan Record) {}
-func generateTaskRecords(ch chan Record)      {}
+func generateMesosRecords(ch chan Record, rg *records.RecordGenerator)     {}
+func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator) {}
+func generateTaskRecords(ch chan Record, rg *records.RecordGenerator)      {}
