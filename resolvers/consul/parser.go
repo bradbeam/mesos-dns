@@ -1,12 +1,10 @@
 package consul
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/CiscoCloud/mesos-consul/state"
 	"github.com/mesos/mesos-go/upid"
-	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
 )
 
@@ -41,13 +39,34 @@ func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix st
 			tags = append(tags, "leader")
 		}
 
-		port, err := strconv.Atoi(slave.PID.Port)
-		if err != nil {
-			logging.Error.Println("Failed to get port for slave", slave.ID, ". Error:", err)
+		record.Service = createService(strings.Join([]string{prefix, slave.ID}, ":"), "mesos", slave.PID.Host, slave.PID.Port, tags)
+
+		ch <- record
+	}
+	close(ch)
+}
+
+func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefix string) {
+	for _, framework := range rg.State.Frameworks {
+		// Skip inactive frameworks
+		if !framework.Active {
 			continue
 		}
 
-		record.Service = createService(strings.Join([]string{prefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, tags)
+		record := Record{
+			Address: "",
+			SlaveID: "",
+		}
+
+		// Pull sanitized framework host + port values
+		frameworkHost, frameworkPort := framework.HostPort()
+
+		// :(  records.hostToIP4 would be super
+		if frameworkHost == "" {
+			continue
+		}
+
+		record.Service = createService(strings.Join([]string{prefix, framework.Name}, ":"), framework.Name, frameworkHost, frameworkPort, []string{})
 
 		ch <- record
 	}

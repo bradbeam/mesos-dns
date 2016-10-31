@@ -11,7 +11,7 @@ import (
 
 // createService will create an appropriately formatted AgentServiceRegistration record.
 // This includes the removal of underscores ("_") and translation of slashes ("/") to dashes ("-")
-func createService(id string, name string, address string, port int, tags []string) *capi.AgentServiceRegistration {
+func createService(id string, name string, address string, stateport string, tags []string) *capi.AgentServiceRegistration {
 	// Format the name appropriately
 	reg, err := regexp.Compile("[^\\w-]")
 	if err != nil {
@@ -27,7 +27,12 @@ func createService(id string, name string, address string, port int, tags []stri
 		Address: address,
 		Tags:    tags,
 	}
-	if port > 0 {
+
+	// Discover port
+	// If we have an invalid or empty string from stateport,
+	// we'll skip assigning a port to the service registration
+	port, err := strconv.Atoi(stateport)
+	if err == nil {
 		asr.Port = port
 	}
 

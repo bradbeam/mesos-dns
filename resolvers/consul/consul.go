@@ -152,23 +152,32 @@ func (b *Backend) Reload(rg *records.RecordGenerator) {
 	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
 	go generateMesosRecords(mesosRecords, rg, b.Config.ServicePrefix)
-	go generateFrameworkRecords(frameworkRecords, rg)
-	go generateTaskRecords(taskRecords, rg)
+	go generateFrameworkRecords(frameworkRecords, rg, b.Config.ServicePrefix)
+	go generateTaskRecords(taskRecords, rg, b.Config.ServicePrefix)
 
 }
 
 func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks chan Record) {
 	consulAgent := make(map[string]chan Record)
 	records := make(map[string][]Record)
+	slaveLookup := make(map[string]string)
 
 	for record := range mesoss {
 		if ch, ok := b.Agents[record.Address]; ok {
 			consulAgent[record.SlaveID] = ch
+			slaveLookup[record.Address] = record.SlaveID
 		}
 		records[record.SlaveID] = append(records[record.SlaveID], record)
 	}
 	for record := range frameworks {
-		records[record.SlaveID] = append(records[record.SlaveID], record)
+		// We'll look up slave by IP because frameworks aren't tied to a
+		// slave :(
+		if slaveid, ok := slaveLookup[record.Address]; ok {
+			records[slaveid] = append(records[slaveid], record)
+		}
+
+		// Discard record if we cant identify a slave to associate it with
+		continue
 	}
 	for record := range tasks {
 		records[record.SlaveID] = append(records[record.SlaveID], record)
@@ -187,5 +196,4 @@ func updateConsul(records []Record, agent chan Record) {
 	}
 }
 
-func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator) {}
-func generateTaskRecords(ch chan Record, rg *records.RecordGenerator)      {}
+func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string) {}
