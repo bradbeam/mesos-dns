@@ -94,6 +94,7 @@ func TestDispatch(t *testing.T) {
 	taskCh := make(chan consul.Record)
 
 	counter := 0
+	t.Log("Test register 3 tasks")
 	for _, channel := range []chan consul.Record{mesosCh, frameworkCh, taskCh} {
 		record := consul.Record{
 			Address: LOCALSLAVEIP,

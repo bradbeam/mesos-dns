@@ -14,6 +14,8 @@ type Backend struct {
 	Agents    map[string]chan Record
 	Control   map[string]chan struct{}
 	ErrorChan chan error
+
+	Config *Config
 }
 
 type Record struct {
@@ -51,6 +53,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	backend := &Backend{
 		ErrorChan: errch,
 		Agents:    make(map[string]chan Record),
+		Config:    config,
 	}
 
 	// Iterate through all members and make sure connection is healthy
@@ -102,6 +105,8 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 		Healthy: false,
 	}
 
+	// go maintainConsul()
+
 	for {
 		if count%(config.CacheRefresh*3) == 0 {
 			if !agent.Healthy {
@@ -145,7 +150,7 @@ func (b *Backend) Reload(rg *records.RecordGenerator) {
 
 	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
-	go generateMesosRecords(mesosRecords, rg)
+	go generateMesosRecords(mesosRecords, rg, b.Config.ServicePrefix)
 	go generateFrameworkRecords(frameworkRecords, rg)
 	go generateTaskRecords(taskRecords, rg)
 
@@ -181,6 +186,5 @@ func updateConsul(records []Record, agent chan Record) {
 	}
 }
 
-func generateMesosRecords(ch chan Record, rg *records.RecordGenerator)     {}
 func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator) {}
 func generateTaskRecords(ch chan Record, rg *records.RecordGenerator)      {}
