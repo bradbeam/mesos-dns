@@ -133,6 +133,7 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 			// Will need to flex on record type/action
 			err := agent.ConsulAgent.ServiceRegister(record.Service)
 			if err != nil {
+				agent.Healthy = false
 				errch <- err
 			}
 		case <-control:
