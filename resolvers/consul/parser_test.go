@@ -79,6 +79,23 @@ func TestGenerateFrameworkRecords(t *testing.T) {
 
 }
 
+func TestGenerateTaskRecords(t *testing.T) {
+	ch := make(chan Record)
+	sj := loadState(t)
+	rg := &records.RecordGenerator{
+		State: sj,
+	}
+	rg.Config = records.NewConfig()
+	rg.Config.IPSources = append(rg.Config.IPSources, "label:CalicoDocker.NetworkSettings.IPAddress")
+	prefix := "mesos-dns"
+
+	go generateTaskRecords(ch, rg, prefix)
+
+	for r := range ch {
+		t.Logf("%+v", r.Service)
+	}
+}
+
 func loadState(t *testing.T) state.State {
 	var sj state.State
 	b, err := ioutil.ReadFile("test/state.json")

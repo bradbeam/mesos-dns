@@ -195,5 +195,3 @@ func updateConsul(records []Record, agent chan Record) {
 		agent <- record
 	}
 }
-
-func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string) {}

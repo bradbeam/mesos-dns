@@ -72,3 +72,49 @@ func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefi
 	}
 	close(ch)
 }
+
+func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string) {
+	ipsources := rg.Config.IPSources
+	ipsources = append(ipsources, "fallback")
+	slaveip := "127.0.0.1"
+
+	for _, framework := range rg.State.Frameworks {
+		if !framework.Active {
+			continue
+		}
+
+		for _, task := range framework.Tasks {
+			if task.State != "TASK_RUNNING" {
+				continue
+			}
+
+			// Discover task IP
+			address := getAddress(task, ipsources, slaveip)
+
+			// Determine if we need to ignore the task because there is no appropriate IP
+			if address == "" {
+				continue
+			}
+
+			ports := task.Ports()
+			if len(ports) == 0 {
+				ports = append(ports, "0")
+			}
+
+			// Create a service registration for every port
+			for _, port := range ports {
+				record := Record{
+					Address: "",
+					SlaveID: "",
+				}
+				id := strings.Join([]string{prefix, task.SlaveID, task.ID, port}, ":")
+				// Need to get slave hostname to add as tag
+				record.Service = createService(id, task.Name, address, port, []string{})
+				// c.getHealthChecks(task, id, address, p)
+				ch <- record
+			}
+		}
+	}
+
+	close(ch)
+}

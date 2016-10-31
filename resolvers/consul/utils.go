@@ -7,6 +7,7 @@ import (
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/mesosphere/mesos-dns/logging"
+	"github.com/mesosphere/mesos-dns/records/state"
 )
 
 // createService will create an appropriately formatted AgentServiceRegistration record.
@@ -149,4 +150,53 @@ func evalVars(check *string, address string, port int) bool {
 	*check = strings.Replace(*check, "{IP}", address, -1)
 	*check = strings.Replace(*check, "{PORT}", strconv.Itoa(port), -1)
 	return true
+}
+
+// getAddress attempts to discover a tasks address based on a list of ip sources
+// you can think of it as similar functionality to nsswitch
+func getAddress(task state.Task, ipsources []string, slaveip string) string {
+
+	var address string
+	for _, lookup := range ipsources {
+		lookupkey := strings.Split(lookup, ":")
+		switch lookupkey[0] {
+		case "mesos":
+			address = task.IP("mesos")
+		case "docker":
+			address = task.IP("docker")
+		case "netinfo":
+			address = task.IP("netinfo")
+		case "host":
+			address = task.IP("host")
+		case "label":
+			if len(lookupkey) != 2 {
+				logging.Error.Fatal("Lookup order label is not in proper format `label:labelname`")
+				continue
+			}
+
+			addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
+			if len(addresses) > 0 {
+				address = addresses[0]
+			}
+
+			// CUSTOM
+			// Since we add the calicodocker label after the container has started up, we'll need to do
+			// an additional check to see if we need to wait for the calico label
+			if address == "" && lookupkey[1] == "CalicoDocker.NetworkSettings.IPAddress" {
+				for _, taskLabel := range task.Labels {
+					if taskLabel.Key == "CALICO_IP" {
+						return ""
+					}
+				}
+			}
+		case "fallback":
+			address = slaveip
+		}
+
+		if address != "" {
+			break
+		}
+	}
+
+	return address
 }
