@@ -135,6 +135,10 @@ func TestDispatch(t *testing.T) {
 	rg.Config.IPSources = append(rg.Config.IPSources, "label:CalicoDocker.NetworkSettings.IPAddress")
 
 	backend := consul.New(config, errch, rg, "")
+	if len(backend.Cache) != 0 {
+		t.Error("Backend cache has items in it after initialization")
+	}
+
 	backend.Reload(rg)
 
 	// IDK if there's a better way to wait for dispatch to do it's thing
@@ -165,6 +169,7 @@ func TestDispatch(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+
 	if len(checks) != 4 {
 		t.Error("Failed to get back 4 checks from consul")
 		for k, v := range checks {
@@ -172,6 +177,18 @@ func TestDispatch(t *testing.T) {
 			t.Log(v)
 		}
 	}
+
+	/*
+		t.Log("Checking cache")
+		if len(backend.Cache) == 0 {
+			t.Error("Backend cache does not have items in it after reload")
+			t.Logf("%+v", backend.Cache)
+		}
+	*/
+
+	// This should be noop since we'll hit the cache
+	backend.Reload(rg)
+	time.Sleep(5 * time.Second)
 
 	// Cleanup -- shut down old goroutines/connections to consul
 	for _, controlCh := range backend.Control {
@@ -195,7 +212,7 @@ func setupBackend(t *testing.T) (*testutil.TestServer, *consul.Backend, chan err
 	version := ""
 
 	// enable debug logging
-	//logging.VeryVerboseFlag = true
+	logging.VeryVerboseFlag = true
 	// Initialize logger
 	logging.SetupLogs()
 

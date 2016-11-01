@@ -120,19 +120,51 @@ func compareCheck(newcheck *capi.AgentCheckRegistration, oldcheck *capi.AgentChe
 	return true
 }
 
-// getDeltaChecks compares two slices (A and B) of AgentServiceRegistration and returns a slice of the differences found in B
-func getDeltaServices(oldservices []*capi.AgentServiceRegistration, newservices []*capi.AgentServiceRegistration) []*capi.AgentServiceRegistration {
-	delta := []*capi.AgentServiceRegistration{}
+func getDeltaRecords(oldRecords []Record, newRecords []Record, action string) []Record {
+	oldchecks := []Record{}
+	oldservices := []Record{}
+	newchecks := []Record{}
+	newservices := []Record{}
+
+	for _, rec := range oldRecords {
+		if rec.Service != nil {
+			oldservices = append(oldservices, rec)
+		}
+		if rec.Check != nil {
+			oldchecks = append(oldchecks, rec)
+		}
+	}
+
+	for _, rec := range newRecords {
+		if rec.Service != nil {
+			newservices = append(newservices, rec)
+		}
+		if rec.Check != nil {
+			newchecks = append(newchecks, rec)
+		}
+	}
+
+	delta := []Record{}
+	delta = append(delta, getDeltaServices(oldservices, newservices, action)...)
+	delta = append(delta, getDeltaChecks(oldchecks, newchecks, action)...)
+	return delta
+
+}
+
+// getDeltaServices compares two slices (A and B) of AgentServiceRegistration and returns a slice of the differences found in B
+func getDeltaServices(oldservices []Record, newservices []Record, action string) []Record {
+	delta := []Record{}
 	// Need to compare current vs old
 	for _, service := range newservices {
 		found := false
 		for _, existing := range oldservices {
-			if compareService(service, existing) {
+			if compareService(service.Service, existing.Service) {
 				found = true
 				break
 			}
 		}
 		if !found {
+			service.Action = action
 			delta = append(delta, service)
 		}
 	}
@@ -140,29 +172,18 @@ func getDeltaServices(oldservices []*capi.AgentServiceRegistration, newservices 
 }
 
 // getDeltaChecks compares two slices (A and B) of AgentCheckRegistration and returns a slice of the differences found in B
-func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.AgentCheckRegistration, context string) []*capi.AgentCheckRegistration {
-	delta := []*capi.AgentCheckRegistration{}
+func getDeltaChecks(oldchecks []Record, newchecks []Record, action string) []Record {
+	delta := []Record{}
 	for _, newhc := range newchecks {
 		found := false
 		for _, oldhc := range oldchecks {
-			if compareCheck(newhc, oldhc) {
+			if compareCheck(newhc.Check, oldhc.Check) {
 				found = true
 				break
 			}
-			// We add this context key in here to know how to react to IDs that are the same
-			// In a registration/add case, we want to update the healthcheck if it is different
-			// even if it uses the same ID
-			// In a deregistration/purge case, we want to leave the healthcheck alone if the IDs are
-			// the same but the content differs. This is so we don't remove a newly updated healthcheck
-			// that uses the same ID as the old one
-			if context == "purge" {
-				if newhc.ID == oldhc.ID {
-					found = true
-					break
-				}
-			}
 		}
 		if !found {
+			newhc.Action = action
 			delta = append(delta, newhc)
 		}
 	}

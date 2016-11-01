@@ -3,6 +3,7 @@ package consul
 import (
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	capi "github.com/hashicorp/consul/api"
@@ -12,11 +13,14 @@ import (
 
 type Backend struct {
 	Agents    map[string]chan Record
+	Config    *Config
 	Control   map[string]chan struct{}
 	ConsulKV  chan capi.KVPairs
 	ErrorChan chan error
 
-	Config *Config
+	sync.Mutex
+	Cache map[string][]Record
+	count int
 }
 
 type Record struct {
@@ -56,6 +60,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	backend := &Backend{
 		ErrorChan: errch,
 		Agents:    make(map[string]chan Record),
+		Cache:     make(map[string][]Record),
 		Config:    config,
 		Control:   make(map[string]chan struct{}),
 	}
@@ -139,18 +144,40 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 				continue
 			}
 
-			if record.Service != nil {
-				err := agent.ConsulAgent.ServiceRegister(record.Service)
-				if err != nil {
-					agent.Healthy = false
-					errch <- err
+			switch record.Action {
+			case "add":
+				if record.Service != nil {
+					logging.VeryVerbose.Println("Registering service", record.Service.ID)
+					err := agent.ConsulAgent.ServiceRegister(record.Service)
+					if err != nil {
+						agent.Healthy = false
+						errch <- err
+					}
 				}
-			}
-			if record.Check != nil {
-				err := agent.ConsulAgent.CheckRegister(record.Check)
-				if err != nil {
-					agent.Healthy = false
-					errch <- err
+				if record.Check != nil {
+					logging.VeryVerbose.Println("Registering check", record.Check.ID)
+					err := agent.ConsulAgent.CheckRegister(record.Check)
+					if err != nil {
+						agent.Healthy = false
+						errch <- err
+					}
+				}
+			case "remove":
+				if record.Service != nil {
+					logging.VeryVerbose.Println("DeRegistering service", record.Service.ID)
+					err := agent.ConsulAgent.ServiceDeregister(record.Service.ID)
+					if err != nil {
+						agent.Healthy = false
+						errch <- err
+					}
+				}
+				if record.Check != nil {
+					logging.VeryVerbose.Println("DeRegistering check", record.Check.ID)
+					err := agent.ConsulAgent.CheckDeregister(record.Check.ID)
+					if err != nil {
+						agent.Healthy = false
+						errch <- err
+					}
 				}
 			}
 		case <-control:
@@ -172,6 +199,10 @@ func (b *Backend) Reload(rg *records.RecordGenerator) {
 	mesosFrameworks := make(chan map[string]string)
 	mesosTasks := make(chan map[string]string)
 
+	b.Lock()
+	b.count++
+	b.Unlock()
+
 	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
 	go generateMesosRecords(mesosRecords, rg, b.Config.ServicePrefix, mesosFrameworks, mesosTasks)
@@ -185,14 +216,23 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	records := make(map[string][]Record)
 	slaveLookup := make(map[string]string)
 
+	// Do some additional setup/initialization
 	for record := range mesoss {
 		if ch, ok := b.Agents[record.Service.Address]; ok {
 			consulAgent[record.SlaveID] = ch
 			slaveLookup[record.Service.Address] = record.SlaveID
 		}
+
+		b.Lock()
+		if _, ok := b.Cache[record.SlaveID]; !ok {
+			b.Cache[record.SlaveID] = []Record{}
+		}
+		b.Unlock()
+
 		records[record.SlaveID] = append(records[record.SlaveID], record)
 	}
 
+	// Create []Record to send to each agent
 	for record := range frameworks {
 		// We'll look up slave by IP because frameworks aren't tied to a
 		// slave :(
@@ -208,10 +248,23 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	}
 
 	for slaveid, agentCh := range consulAgent {
-		go updateConsul(records[slaveid], agentCh)
+		// Filter the list of []Record we sent to each consul agent
+		// to be only the differences between this iteration and last
+		delta := getDeltaRecords(b.Cache[slaveid], records[slaveid], "add")
+		delta = append(delta, getDeltaRecords(records[slaveid], b.Cache[slaveid], "remove")...)
+
+		go updateConsul(delta, agentCh)
 	}
 
 	// Save off records for cache comparison
+	// Check to see if we need to drop/refresh our cache
+	b.Lock()
+	if b.count%b.Config.CacheRefresh == 0 {
+		b.Cache = make(map[string][]Record)
+	} else {
+		b.Cache = records
+	}
+	b.Unlock()
 }
 
 func updateConsul(records []Record, agent chan Record) {
