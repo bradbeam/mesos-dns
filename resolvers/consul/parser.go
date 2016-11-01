@@ -9,7 +9,13 @@ import (
 	"github.com/mesosphere/mesos-dns/records/state"
 )
 
-func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix string, frameworkInfo chan map[string]string, taskInfo chan map[string]string) {
+type SlaveInfo struct {
+	Address  string
+	Hostname string
+	ID       string
+}
+
+func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix string, frameworkInfo chan map[string]string, taskInfo chan map[string]SlaveInfo) {
 	// Create a bogus Slave struct for the leader
 	// master@10.10.10.8:5050
 	lead := state.Slave{
@@ -22,7 +28,7 @@ func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix st
 	}
 
 	//frameworkSlaves := make(map[string]string)
-	taskSlaves := make(map[string]string)
+	taskSlaves := make(map[string]SlaveInfo)
 
 	for _, slave := range rg.State.Slaves {
 		record := Record{
@@ -33,7 +39,13 @@ func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix st
 
 		// Pull out only the hostname, not the FQDN
 		slaveHostname := strings.Split(slave.Hostname, ".")[0]
-		taskSlaves[slave.ID] = slaveHostname
+
+		slaveInfo := SlaveInfo{
+			Address:  slave.PID.Host,
+			Hostname: slaveHostname,
+			ID:       slave.ID,
+		}
+		taskSlaves[slave.ID] = slaveInfo
 
 		tags := []string{"slave", slaveHostname}
 
@@ -83,16 +95,14 @@ func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefi
 	close(ch)
 }
 
-func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]string, consulKV chan capi.KVPairs) {
+func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]SlaveInfo, consulKV chan capi.KVPairs) {
 	ipsources := rg.Config.IPSources
 	ipsources = append(ipsources, "fallback")
-	slaveip := "127.0.0.1"
 
-	var slaveInfo map[string]string
-	for data := range mesosInfo {
-		slaveInfo = data
-	}
+	// Get slaveid => hostname
+	slaveInfo := <-mesosInfo
 
+	// Get consul KV Pairs for HC
 	kvPairs := <-consulKV
 
 	for _, framework := range rg.State.Frameworks {
@@ -106,7 +116,7 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 			}
 
 			// Discover task IP
-			address := getAddress(task, ipsources, slaveip)
+			address := getAddress(task, ipsources, slaveInfo[task.SlaveID].Address)
 
 			// Determine if we need to ignore the task because there is no appropriate IP
 			if address == "" {
@@ -127,8 +137,9 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 				}
 				var tags []string
 				if slave, ok := slaveInfo[task.SlaveID]; ok {
-					tags = append(tags, slave)
+					tags = append(tags, slave.Hostname)
 				}
+
 				id := strings.Join([]string{prefix, task.SlaveID, task.ID, port}, ":")
 				// Need to get slave hostname to add as tag
 				record.Service = createService(id, task.Name, address, port, tags)

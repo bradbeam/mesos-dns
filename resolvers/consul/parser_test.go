@@ -33,7 +33,7 @@ func TestGenerateMesosRecords(t *testing.T) {
 	}
 	prefix := "mesos-dns"
 	fwCh := make(chan map[string]string)
-	taskCh := make(chan map[string]string)
+	taskCh := make(chan map[string]SlaveInfo)
 	expected := Record{
 		Address: "127.0.0.1",
 		SlaveID: "slave1",
@@ -93,11 +93,15 @@ func TestGenerateTaskRecords(t *testing.T) {
 	rg.Config = records.NewConfig()
 	rg.Config.IPSources = append(rg.Config.IPSources, "label:CalicoDocker.NetworkSettings.IPAddress")
 	prefix := "mesos-dns"
-	mesosInfo := make(map[string]string)
-	mesosInfo["20160107-001256-134875658-5050-27524-S3"] = "slave01"
-	taskCh := make(chan map[string]string)
+	mesosInfo := make(map[string]SlaveInfo)
+	mesosInfo["20160107-001256-134875658-5050-27524-S3"] = SlaveInfo{
+		Address:  "127.0.0.1",
+		Hostname: "slave01",
+		ID:       "20160107-001256-134875658-5050-27524-S3",
+	}
+	taskCh := make(chan map[string]SlaveInfo)
 
-	go func(info map[string]string, ch chan map[string]string) {
+	go func(info map[string]SlaveInfo, ch chan map[string]SlaveInfo) {
 		ch <- info
 		close(ch)
 	}(mesosInfo, taskCh)
@@ -123,18 +127,30 @@ func TestGenerateTaskRecords(t *testing.T) {
 		}
 	}
 
-	if len(recs) != 18 {
-		t.Error("Did not generate total expected number of records, 18, got", len(recs))
-		t.Logf("%+v", recs)
-	}
-	if len(svcs) != 14 {
-		t.Error("Did not generate expected number of service records, 14, got", len(svcs))
-		t.Logf("%+v", svcs)
+	// 4x -S3 slave, 4x checks, 1x -S66 slave (netinfo ip)
+	// the rest fail to assign an IP because we don't have slaveinfo populated
+	// for the other slaves
+	if len(recs) != 9 {
+		t.Error("Did not generate total expected number of records, 9, got", len(recs))
+		for _, rec := range recs {
+			t.Logf("%+v", rec)
+		}
 	}
 
+	// 4x -S3 slave, 1x -S66 slave (netinfo ip)
+	if len(svcs) != 5 {
+		t.Error("Did not generate expected number of service records, 5, got", len(svcs))
+		for _, rec := range svcs {
+			t.Logf("%s %+v", rec.Service.ID, rec)
+		}
+	}
+
+	// 4x checks
 	if len(chks) != 4 {
 		t.Error("Did not generate expected number of check records, 4, got", len(chks))
-		t.Logf("%+v", chks)
+		for _, rec := range chks {
+			t.Logf("%s %+v", rec.Check.ID, rec)
+		}
 	}
 }
 

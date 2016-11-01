@@ -197,7 +197,7 @@ func (b *Backend) Reload(rg *records.RecordGenerator) {
 	// Metadata Channels to allow frameworks/tasks to look up
 	// various slave identification
 	mesosFrameworks := make(chan map[string]string)
-	mesosTasks := make(chan map[string]string)
+	mesosTasks := make(chan map[string]SlaveInfo)
 
 	b.Lock()
 	b.count++
@@ -233,6 +233,7 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	}
 
 	// Create []Record to send to each agent
+	// TODO find framework records
 	for record := range frameworks {
 		// We'll look up slave by IP because frameworks aren't tied to a
 		// slave :(
