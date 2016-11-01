@@ -58,6 +58,7 @@ func TestNew(t *testing.T) {
 	}
 
 	t.Log("Test successful connection to local consul agent")
+	errCh := make(chan error)
 	wg.Add(1)
 	go func(errch chan error) {
 		err := readErrorChan(errch)
@@ -65,10 +66,15 @@ func TestNew(t *testing.T) {
 			t.Error(err)
 		}
 		wg.Done()
-	}(errch)
+	}(errCh)
 
-	config.Address = server.HTTPAddr
-	backend := consul.New(config, errch, rg, version)
+	cfg := &consul.Config{
+		Address:      "127.0.0.1:8500",
+		CacheRefresh: 2,
+	}
+	cfg.Address = server.HTTPAddr
+
+	backend := consul.New(cfg, errCh, rg, version)
 	wg.Wait()
 	if backend == nil {
 		t.Error("Failed to create backend")

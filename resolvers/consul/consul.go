@@ -12,7 +12,7 @@ import (
 )
 
 type Backend struct {
-	Agents          map[string]chan Record
+	Agents          map[string]chan []Record
 	Config          *Config
 	Control         map[string]chan struct{}
 	ConsulKV        chan capi.KVPairs
@@ -45,7 +45,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		return nil
 	}
 
-	client, err := consulInit(config, addr, port, rg.Config.RefreshSeconds)
+	client, err := consulInit(*config, addr, port, rg.Config.RefreshSeconds)
 	if err != nil {
 		errch <- err
 		return nil
@@ -60,7 +60,7 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 
 	backend := &Backend{
 		ErrorChan: errch,
-		Agents:    make(map[string]chan Record),
+		Agents:    make(map[string]chan []Record),
 		Cache:     make(map[string][]Record),
 		Config:    config,
 		Control:   make(map[string]chan struct{}),
@@ -68,24 +68,24 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 
 	kvCh := make(chan capi.KVPairs)
 	kvControlCh := make(chan struct{})
-	go pollConsulKVHC(client, config, kvCh, errch, kvControlCh)
+	go pollConsulKVHC(client, config.CacheRefresh, kvCh, errch, kvControlCh)
 	backend.ConsulKV = kvCh
 	backend.ConsulKVControl = kvControlCh
 
 	// Iterate through all members and make sure connection is healthy
 	// or initialize a new connection
 	for _, member := range members {
-		recordInput := make(chan Record)
+		recordInput := make(chan []Record)
 		backend.Agents[member.Addr] = recordInput
 		controlCh := make(chan struct{})
 		backend.Control[member.Addr] = controlCh
-		go consulAgent(member, config, recordInput, controlCh, errch)
+		go consulAgent(member, *config, recordInput, controlCh, errch)
 	}
 
 	return backend
 }
 
-func consulInit(config *Config, addr string, port string, refresh int) (*capi.Client, error) {
+func consulInit(config Config, addr string, port string, refresh int) (*capi.Client, error) {
 	cfg := capi.DefaultConfig()
 	cfg.Address = strings.Join([]string{addr, port}, ":")
 	cfg.Datacenter = config.Datacenter
@@ -109,7 +109,7 @@ func consulInit(config *Config, addr string, port string, refresh int) (*capi.Cl
 	return client, err
 }
 
-func consulAgent(member *capi.AgentMember, config *Config, records chan Record, control chan struct{}, errch chan error) {
+func consulAgent(member *capi.AgentMember, config Config, records chan []Record, control chan struct{}, errch chan error) {
 	_, port, err := net.SplitHostPort(config.Address)
 	if err != nil {
 		errch <- err
@@ -122,7 +122,7 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 		Healthy: false,
 	}
 
-	// go maintainConsul()
+	cache := []Record{}
 
 	for {
 		if count%(config.CacheRefresh*3) == 0 {
@@ -136,56 +136,69 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 				}
 				agent.Healthy = true
 				agent.ConsulAgent = client.Agent()
+				cache = []Record{}
 			}
 		}
 
 		select {
-		case record := <-records:
-			// Update Consul
-			if !agent.Healthy {
-				logging.VeryVerbose.Println("Skipping record update because agent isnt healthy")
-				continue
-			}
+		case recordSet := <-records:
+			// Get Delta records to add
+			delta := getDeltaRecords(cache, recordSet, "add")
+			// Get Delta records to remove
+			delta = append(delta, getDeltaRecords(recordSet, cache, "remove")...)
 
-			switch record.Action {
-			case "add":
-				if record.Service != nil {
-					logging.VeryVerbose.Println("Registering service", record.Service.ID)
-					err := agent.ConsulAgent.ServiceRegister(record.Service)
-					if err != nil {
-						agent.Healthy = false
-						errch <- err
-					}
+			// Rebuild cache with successful registrations
+			cache = []Record{}
+
+			for _, record := range delta {
+				// Update Consul
+				if !agent.Healthy {
+					logging.VeryVerbose.Println("Skipping record update because agent isnt healthy")
+					continue
 				}
-				if record.Check != nil {
-					logging.VeryVerbose.Println("Registering check", record.Check.ID)
-					err := agent.ConsulAgent.CheckRegister(record.Check)
-					if err != nil {
-						agent.Healthy = false
-						errch <- err
+
+				switch record.Action {
+				case "add":
+					if record.Service != nil {
+						logging.VeryVerbose.Println("Registering service", record.Service.ID)
+						err := agent.ConsulAgent.ServiceRegister(record.Service)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
 					}
-				}
-			case "remove":
-				if record.Service != nil {
-					logging.VeryVerbose.Println("DeRegistering service", record.Service.ID)
-					err := agent.ConsulAgent.ServiceDeregister(record.Service.ID)
-					if err != nil {
-						agent.Healthy = false
-						errch <- err
+					if record.Check != nil {
+						logging.VeryVerbose.Println("Registering check", record.Check.ID)
+						err := agent.ConsulAgent.CheckRegister(record.Check)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
 					}
-				}
-				if record.Check != nil {
-					logging.VeryVerbose.Println("DeRegistering check", record.Check.ID)
-					err := agent.ConsulAgent.CheckDeregister(record.Check.ID)
-					if err != nil {
-						agent.Healthy = false
-						errch <- err
+					// Update cache with healthy records
+					cache = append(cache, record)
+				case "remove":
+					if record.Service != nil {
+						logging.VeryVerbose.Println("DeRegistering service", record.Service.ID)
+						err := agent.ConsulAgent.ServiceDeregister(record.Service.ID)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
+					}
+					if record.Check != nil {
+						logging.VeryVerbose.Println("DeRegistering check", record.Check.ID)
+						err := agent.ConsulAgent.CheckDeregister(record.Check.ID)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
 					}
 				}
 			}
 		case <-control:
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(1 * time.Second):
 			count += 1
 		}
 	}
@@ -215,7 +228,7 @@ func (b *Backend) Reload(rg *records.RecordGenerator) {
 }
 
 func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks chan Record) {
-	consulAgent := make(map[string]chan Record)
+	consulAgent := make(map[string]chan []Record)
 	records := make(map[string][]Record)
 	slaveLookup := make(map[string]string)
 
@@ -251,33 +264,15 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 		records[record.SlaveID] = append(records[record.SlaveID], record)
 	}
 
+	// Emit list of records to each consul agent
 	for slaveid, agentCh := range consulAgent {
-		// Filter the list of []Record we sent to each consul agent
-		// to be only the differences between this iteration and last
-		delta := getDeltaRecords(b.Cache[slaveid], records[slaveid], "add")
-		delta = append(delta, getDeltaRecords(records[slaveid], b.Cache[slaveid], "remove")...)
-
-		go updateConsul(delta, agentCh)
-	}
-
-	// Save off records for cache comparison
-	// Check to see if we need to drop/refresh our cache
-	b.Lock()
-	if b.count%b.Config.CacheRefresh == 0 {
-		b.Cache = make(map[string][]Record)
-	} else {
-		b.Cache = records
-	}
-	b.Unlock()
-}
-
-func updateConsul(records []Record, agent chan Record) {
-	for _, record := range records {
-		agent <- record
+		go func(records []Record, agent chan []Record) {
+			agent <- records
+		}(records[slaveid], agentCh)
 	}
 }
 
-func pollConsulKVHC(client *capi.Client, config *Config, kvCh chan capi.KVPairs, errch chan error, control chan struct{}) {
+func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, errch chan error, control chan struct{}) {
 	var kvs capi.KVPairs
 	var err error
 	ticker := time.NewTicker(time.Millisecond * 500)
@@ -286,7 +281,7 @@ func pollConsulKVHC(client *capi.Client, config *Config, kvCh chan capi.KVPairs,
 		count += 1
 		// Always send a value through to make sure we dont make tasks wait on us
 
-		if count%config.CacheRefresh == 1 {
+		if count%refresh == 1 {
 			kvs, _, err = client.KV().List("healthchecks/", nil)
 			if err != nil {
 				errch <- err
@@ -299,7 +294,7 @@ func pollConsulKVHC(client *capi.Client, config *Config, kvCh chan capi.KVPairs,
 			return
 		case <-ticker.C:
 			kvCh <- kvs
-			time.Sleep(time.Second * time.Duration(config.CacheRefresh))
+			time.Sleep(time.Second * time.Duration(refresh))
 		}
 
 	}
