@@ -13,16 +13,19 @@ import (
 type Backend struct {
 	Agents    map[string]chan Record
 	Control   map[string]chan struct{}
+	ConsulKV  chan capi.KVPairs
 	ErrorChan chan error
 
 	Config *Config
 }
 
 type Record struct {
+	Action  string
 	Address string
 	SlaveID string
 
 	Service *capi.AgentServiceRegistration
+	Check   *capi.AgentCheckRegistration
 }
 
 type Agent struct {
@@ -37,14 +40,14 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		return nil
 	}
 
-	agent, err := consulInit(config, addr, port, rg.Config.RefreshSeconds)
+	client, err := consulInit(config, addr, port, rg.Config.RefreshSeconds)
 	if err != nil {
 		errch <- err
 		return nil
 	}
 
 	// Only get LAN members
-	members, err := agent.Members(false)
+	members, err := client.Agent().Members(false)
 	if err != nil {
 		errch <- err
 		return nil
@@ -54,7 +57,12 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		ErrorChan: errch,
 		Agents:    make(map[string]chan Record),
 		Config:    config,
+		Control:   make(map[string]chan struct{}),
 	}
+
+	kvCh := make(chan capi.KVPairs)
+	go pollConsulKVHC(client, config, kvCh, errch)
+	backend.ConsulKV = kvCh
 
 	// Iterate through all members and make sure connection is healthy
 	// or initialize a new connection
@@ -62,13 +70,14 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		recordInput := make(chan Record)
 		backend.Agents[member.Addr] = recordInput
 		controlCh := make(chan struct{})
+		backend.Control[member.Addr] = controlCh
 		go consulAgent(member, config, recordInput, controlCh, errch)
 	}
 
 	return backend
 }
 
-func consulInit(config *Config, addr string, port string, refresh int) (*capi.Agent, error) {
+func consulInit(config *Config, addr string, port string, refresh int) (*capi.Client, error) {
 	cfg := capi.DefaultConfig()
 	cfg.Address = strings.Join([]string{addr, port}, ":")
 	cfg.Datacenter = config.Datacenter
@@ -89,7 +98,7 @@ func consulInit(config *Config, addr string, port string, refresh int) (*capi.Ag
 	}
 
 	logging.VeryVerbose.Println("Connected to consul agent", cfg.Address)
-	return client.Agent(), err
+	return client, err
 }
 
 func consulAgent(member *capi.AgentMember, config *Config, records chan Record, control chan struct{}, errch chan error) {
@@ -111,14 +120,14 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 		if count%(config.CacheRefresh*3) == 0 {
 			if !agent.Healthy {
 				logging.VeryVerbose.Println("Reconnecting to consul at", member.Addr, port)
-				cagent, err := consulInit(config, member.Addr, port, 5)
+				client, err := consulInit(config, member.Addr, port, 5)
 				if err != nil {
 					errch <- err
 					time.Sleep(1 * time.Second)
 					continue
 				}
 				agent.Healthy = true
-				agent.ConsulAgent = cagent
+				agent.ConsulAgent = client.Agent()
 			}
 		}
 
@@ -130,11 +139,19 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 				continue
 			}
 
-			// Will need to flex on record type/action
-			err := agent.ConsulAgent.ServiceRegister(record.Service)
-			if err != nil {
-				agent.Healthy = false
-				errch <- err
+			if record.Service != nil {
+				err := agent.ConsulAgent.ServiceRegister(record.Service)
+				if err != nil {
+					agent.Healthy = false
+					errch <- err
+				}
+			}
+			if record.Check != nil {
+				err := agent.ConsulAgent.CheckRegister(record.Check)
+				if err != nil {
+					agent.Healthy = false
+					errch <- err
+				}
 			}
 		case <-control:
 			return
@@ -145,15 +162,21 @@ func consulAgent(member *capi.AgentMember, config *Config, records chan Record, 
 }
 
 func (b *Backend) Reload(rg *records.RecordGenerator) {
+	// Data channels for generated ServiceRegistrations
 	mesosRecords := make(chan Record)
 	frameworkRecords := make(chan Record)
 	taskRecords := make(chan Record)
 
+	// Metadata Channels to allow frameworks/tasks to look up
+	// various slave identification
+	mesosFrameworks := make(chan map[string]string)
+	mesosTasks := make(chan map[string]string)
+
 	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
-	go generateMesosRecords(mesosRecords, rg, b.Config.ServicePrefix)
-	go generateFrameworkRecords(frameworkRecords, rg, b.Config.ServicePrefix)
-	go generateTaskRecords(taskRecords, rg, b.Config.ServicePrefix)
+	go generateMesosRecords(mesosRecords, rg, b.Config.ServicePrefix, mesosFrameworks, mesosTasks)
+	go generateFrameworkRecords(frameworkRecords, rg, b.Config.ServicePrefix, mesosFrameworks)
+	go generateTaskRecords(taskRecords, rg, b.Config.ServicePrefix, mesosTasks, b.ConsulKV)
 
 }
 
@@ -163,12 +186,13 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	slaveLookup := make(map[string]string)
 
 	for record := range mesoss {
-		if ch, ok := b.Agents[record.Address]; ok {
+		if ch, ok := b.Agents[record.Service.Address]; ok {
 			consulAgent[record.SlaveID] = ch
-			slaveLookup[record.Address] = record.SlaveID
+			slaveLookup[record.Service.Address] = record.SlaveID
 		}
 		records[record.SlaveID] = append(records[record.SlaveID], record)
 	}
+
 	for record := range frameworks {
 		// We'll look up slave by IP because frameworks aren't tied to a
 		// slave :(
@@ -193,5 +217,26 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 func updateConsul(records []Record, agent chan Record) {
 	for _, record := range records {
 		agent <- record
+	}
+}
+
+func pollConsulKVHC(client *capi.Client, config *Config, kvCh chan capi.KVPairs, errch chan error) {
+	var kvs capi.KVPairs
+	var err error
+	count := 0
+	for {
+		count += 1
+		// Always send a value through to make sure we dont make tasks wait on us
+
+		if count%config.CacheRefresh == 1 {
+			kvs, _, err = client.KV().List("healthchecks/", nil)
+			if err != nil {
+				errch <- err
+				continue
+			}
+		}
+
+		kvCh <- kvs
+		time.Sleep(time.Second * time.Duration(config.CacheRefresh))
 	}
 }

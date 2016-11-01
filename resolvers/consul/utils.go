@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -38,6 +39,34 @@ func createService(id string, name string, address string, stateport string, tag
 	}
 
 	return asr
+}
+
+func createHealthChecks(kvs capi.KVPairs, endpoint string, id string, address string, port string) (*capi.AgentCheckRegistration, error) {
+	check := &capi.AgentCheckRegistration{}
+	for _, kv := range kvs {
+		if kv.Key != "healthchecks/"+endpoint {
+			continue
+		}
+
+		err := json.Unmarshal(kv.Value, check)
+		if err != nil {
+			return check, err
+		}
+		check.ID = strings.Join([]string{check.ID, id}, ":")
+		check.ServiceID = id
+
+		// Now to do some variable expansion
+		// We're going to reserve `{IP}` and `{PORT}`
+		// We'll apply this to
+		// http, script, tcp
+		for _, healthCheck := range []string{check.HTTP, check.TCP, check.Script} {
+			if healthCheck != "" {
+				evalVars(&healthCheck, address, port)
+			}
+		}
+	}
+
+	return check, nil
 }
 
 // compareService is a deep comparison of two AgentServiceRegistrations to determine if they are the same
@@ -142,13 +171,13 @@ func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.
 
 // evalVars does the translation of {PORT} and {IP} variables in a defined consul healthcheck
 // with their appropriate values
-func evalVars(check *string, address string, port int) bool {
-	if strings.Contains(*check, "{PORT}") && port == 0 {
+func evalVars(check *string, address string, port string) bool {
+	if strings.Contains(*check, "{PORT}") && port == "0" {
 		logging.Error.Println("Invalid port for substitution in healthcheck", *check, port)
 		return false
 	}
 	*check = strings.Replace(*check, "{IP}", address, -1)
-	*check = strings.Replace(*check, "{PORT}", strconv.Itoa(port), -1)
+	*check = strings.Replace(*check, "{PORT}", port, -1)
 	return true
 }
 
