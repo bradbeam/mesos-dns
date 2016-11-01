@@ -12,11 +12,12 @@ import (
 )
 
 type Backend struct {
-	Agents    map[string]chan Record
-	Config    *Config
-	Control   map[string]chan struct{}
-	ConsulKV  chan capi.KVPairs
-	ErrorChan chan error
+	Agents          map[string]chan Record
+	Config          *Config
+	Control         map[string]chan struct{}
+	ConsulKV        chan capi.KVPairs
+	ConsulKVControl chan struct{}
+	ErrorChan       chan error
 
 	sync.Mutex
 	Cache map[string][]Record
@@ -66,8 +67,10 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	}
 
 	kvCh := make(chan capi.KVPairs)
-	go pollConsulKVHC(client, config, kvCh, errch)
+	kvControlCh := make(chan struct{})
+	go pollConsulKVHC(client, config, kvCh, errch, kvControlCh)
 	backend.ConsulKV = kvCh
+	backend.ConsulKVControl = kvControlCh
 
 	// Iterate through all members and make sure connection is healthy
 	// or initialize a new connection
@@ -274,9 +277,10 @@ func updateConsul(records []Record, agent chan Record) {
 	}
 }
 
-func pollConsulKVHC(client *capi.Client, config *Config, kvCh chan capi.KVPairs, errch chan error) {
+func pollConsulKVHC(client *capi.Client, config *Config, kvCh chan capi.KVPairs, errch chan error, control chan struct{}) {
 	var kvs capi.KVPairs
 	var err error
+	ticker := time.NewTicker(time.Millisecond * 500)
 	count := 0
 	for {
 		count += 1
@@ -290,7 +294,13 @@ func pollConsulKVHC(client *capi.Client, config *Config, kvCh chan capi.KVPairs,
 			}
 		}
 
-		kvCh <- kvs
-		time.Sleep(time.Second * time.Duration(config.CacheRefresh))
+		select {
+		case <-control:
+			return
+		case <-ticker.C:
+			kvCh <- kvs
+			time.Sleep(time.Second * time.Duration(config.CacheRefresh))
+		}
+
 	}
 }

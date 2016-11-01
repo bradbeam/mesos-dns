@@ -50,10 +50,10 @@ func TestNew(t *testing.T) {
 	}(errch)
 
 	t.Log("Test failure to connect to local consul agent")
-	backend := consul.New(config, errch, rg, version)
+	brokenbackend := consul.New(config, errch, rg, version)
 	wg.Wait()
 
-	if backend != nil {
+	if brokenbackend != nil {
 		t.Error("Created consul backend out of magic pixie dust")
 	}
 
@@ -68,7 +68,7 @@ func TestNew(t *testing.T) {
 	}(errch)
 
 	config.Address = server.HTTPAddr
-	backend = consul.New(config, errch, rg, version)
+	backend := consul.New(config, errch, rg, version)
 	wg.Wait()
 	if backend == nil {
 		t.Error("Failed to create backend")
@@ -81,6 +81,7 @@ func TestNew(t *testing.T) {
 	for _, controlCh := range backend.Control {
 		close(controlCh)
 	}
+	close(backend.ConsulKVControl)
 }
 
 func TestDispatch(t *testing.T) {
