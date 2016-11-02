@@ -31,23 +31,23 @@
 		},
 		{
 			"ImportPath": "github.com/hashicorp/consul/acl",
-			"Comment": "v0.5.2-316-g662ca39",
-			"Rev": "662ca39104a39f52341c9b78314883ea7ebb52d0"
+			"Comment": "v0.6.3",
+			"Rev": "c933efde50d25395c7b5a42167578fda603d43d8"
 		},
 		{
 			"ImportPath": "github.com/hashicorp/consul/api",
-			"Comment": "v0.5.2-316-g662ca39",
-			"Rev": "662ca39104a39f52341c9b78314883ea7ebb52d0"
+			"Comment": "v0.6.3",
+			"Rev": "c933efde50d25395c7b5a42167578fda603d43d8"
 		},
 		{
 			"ImportPath": "github.com/hashicorp/consul/consul/structs",
-			"Comment": "v0.5.2-316-g662ca39",
-			"Rev": "662ca39104a39f52341c9b78314883ea7ebb52d0"
+			"Comment": "v0.6.3",
+			"Rev": "c933efde50d25395c7b5a42167578fda603d43d8"
 		},
 		{
 			"ImportPath": "github.com/hashicorp/consul/testutil",
-			"Comment": "v0.5.2-316-g662ca39",
-			"Rev": "662ca39104a39f52341c9b78314883ea7ebb52d0"
+			"Comment": "v0.6.3",
+			"Rev": "c933efde50d25395c7b5a42167578fda603d43d8"
 		},
 		{
 			"ImportPath": "github.com/hashicorp/go-msgpack/codec",
@@ -159,6 +159,15 @@
 		{
 			"ImportPath": "golang.org/x/net/context",
 			"Rev": "db8e4de5b2d6653f66aea53094624468caad15d2"
+		},
+		{
+			"ImportPath": "github.com/hashicorp/go-cleanhttp",
+			"Rev": "ce617e79981a8fff618bb643d155133a8f38db96"
+		},
+		{
+			"ImportPath": "github.com/hashicorp/serf/coordinate",
+			"Comment": "v0.7.0-1-g39c7c06",
+			"Rev": "39c7c06298b480560202bec00c2c77e974e88792"
 		}
 	]
 }
