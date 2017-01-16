@@ -10,19 +10,19 @@ clean:
 	docker rmi $(CONTAINER) || true
 
 dockerbuild:
-	docker build --no-cache -t $(CONTAINER)-build -f Dockerfile.test .
+	docker build -t $(CONTAINER)-build -f Dockerfile.test .
 
 docker: buildstatic
-	docker build --no-cache -t $(CONTAINER):$(VERSION) -f Dockerfile.build .
+	docker build -t $(CONTAINER):$(VERSION) -f Dockerfile.build .
 
 # Ignore vendored dependencies
 # Return 1 if any files found that haven't been formatted
 fmttest: dockerbuild
-	docker run --rm $(CONTAINER)-build gofmt -l . | awk '!/^Godep/ { print $0; err=1 }; END{ exit err }'
+	docker run --rm $(CONTAINER)-build gofmt -l . | awk '!/^vendor/ { print $0; err=1 }; END{ exit err }'
 
 test: dockerbuild
-	docker run --rm $(CONTAINER)-build godep go test -v ./...
-	docker run --rm $(CONTAINER)-build godep go test -v -short -race ./...
+	docker run --rm $(CONTAINER)-build bash -c 'godep go test -v $$(go list ./... | grep -v vendor/)'
+	docker run --rm $(CONTAINER)-build bash -c 'godep go test -v -short -race  $$(go list ./... | grep -v vendor/)'
 
 testall: fmttest test 
 
