@@ -1,17 +1,19 @@
 package consul
 
 import (
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/mesosphere/mesos-dns/logging"
+	"github.com/mesosphere/mesos-dns/records/state"
 )
 
 // createService will create an appropriately formatted AgentServiceRegistration record.
 // This includes the removal of underscores ("_") and translation of slashes ("/") to dashes ("-")
-func createService(id string, name string, address string, port int, tags []string) *capi.AgentServiceRegistration {
+func createService(id string, name string, address string, stateport string, tags []string) *capi.AgentServiceRegistration {
 	// Format the name appropriately
 	reg, err := regexp.Compile("[^\\w-]")
 	if err != nil {
@@ -27,11 +29,44 @@ func createService(id string, name string, address string, port int, tags []stri
 		Address: address,
 		Tags:    tags,
 	}
-	if port > 0 {
+
+	// Discover port
+	// If we have an invalid or empty string from stateport,
+	// we'll skip assigning a port to the service registration
+	port, err := strconv.Atoi(stateport)
+	if err == nil {
 		asr.Port = port
 	}
 
 	return asr
+}
+
+func createHealthChecks(kvs capi.KVPairs, endpoint string, id string, address string, port string) (*capi.AgentCheckRegistration, error) {
+	check := &capi.AgentCheckRegistration{}
+	for _, kv := range kvs {
+		if kv.Key != "healthchecks/"+endpoint {
+			continue
+		}
+
+		err := json.Unmarshal(kv.Value, check)
+		if err != nil {
+			return check, err
+		}
+		check.ID = strings.Join([]string{check.ID, id}, ":")
+		check.ServiceID = id
+
+		// Now to do some variable expansion
+		// We're going to reserve `{IP}` and `{PORT}`
+		// We'll apply this to
+		// http, script, tcp
+		for _, healthCheck := range []string{check.HTTP, check.TCP, check.Script} {
+			if healthCheck != "" {
+				evalVars(&healthCheck, address, port)
+			}
+		}
+	}
+
+	return check, nil
 }
 
 // compareService is a deep comparison of two AgentServiceRegistrations to determine if they are the same
@@ -85,19 +120,51 @@ func compareCheck(newcheck *capi.AgentCheckRegistration, oldcheck *capi.AgentChe
 	return true
 }
 
-// getDeltaChecks compares two slices (A and B) of AgentServiceRegistration and returns a slice of the differences found in B
-func getDeltaServices(oldservices []*capi.AgentServiceRegistration, newservices []*capi.AgentServiceRegistration) []*capi.AgentServiceRegistration {
-	delta := []*capi.AgentServiceRegistration{}
+func getDeltaRecords(oldRecords []Record, newRecords []Record, action string) []Record {
+	oldchecks := []Record{}
+	oldservices := []Record{}
+	newchecks := []Record{}
+	newservices := []Record{}
+
+	for _, rec := range oldRecords {
+		if rec.Service != nil {
+			oldservices = append(oldservices, rec)
+		}
+		if rec.Check != nil {
+			oldchecks = append(oldchecks, rec)
+		}
+	}
+
+	for _, rec := range newRecords {
+		if rec.Service != nil {
+			newservices = append(newservices, rec)
+		}
+		if rec.Check != nil {
+			newchecks = append(newchecks, rec)
+		}
+	}
+
+	delta := []Record{}
+	delta = append(delta, getDeltaServices(oldservices, newservices, action)...)
+	delta = append(delta, getDeltaChecks(oldchecks, newchecks, action)...)
+	return delta
+
+}
+
+// getDeltaServices compares two slices (A and B) of AgentServiceRegistration and returns a slice of the differences found in B
+func getDeltaServices(oldservices []Record, newservices []Record, action string) []Record {
+	delta := []Record{}
 	// Need to compare current vs old
 	for _, service := range newservices {
 		found := false
 		for _, existing := range oldservices {
-			if compareService(service, existing) {
+			if compareService(service.Service, existing.Service) {
 				found = true
 				break
 			}
 		}
 		if !found {
+			service.Action = action
 			delta = append(delta, service)
 		}
 	}
@@ -105,29 +172,18 @@ func getDeltaServices(oldservices []*capi.AgentServiceRegistration, newservices 
 }
 
 // getDeltaChecks compares two slices (A and B) of AgentCheckRegistration and returns a slice of the differences found in B
-func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.AgentCheckRegistration, context string) []*capi.AgentCheckRegistration {
-	delta := []*capi.AgentCheckRegistration{}
+func getDeltaChecks(oldchecks []Record, newchecks []Record, action string) []Record {
+	delta := []Record{}
 	for _, newhc := range newchecks {
 		found := false
 		for _, oldhc := range oldchecks {
-			if compareCheck(newhc, oldhc) {
+			if compareCheck(newhc.Check, oldhc.Check) {
 				found = true
 				break
 			}
-			// We add this context key in here to know how to react to IDs that are the same
-			// In a registration/add case, we want to update the healthcheck if it is different
-			// even if it uses the same ID
-			// In a deregistration/purge case, we want to leave the healthcheck alone if the IDs are
-			// the same but the content differs. This is so we don't remove a newly updated healthcheck
-			// that uses the same ID as the old one
-			if context == "purge" {
-				if newhc.ID == oldhc.ID {
-					found = true
-					break
-				}
-			}
 		}
 		if !found {
+			newhc.Action = action
 			delta = append(delta, newhc)
 		}
 	}
@@ -136,12 +192,61 @@ func getDeltaChecks(oldchecks []*capi.AgentCheckRegistration, newchecks []*capi.
 
 // evalVars does the translation of {PORT} and {IP} variables in a defined consul healthcheck
 // with their appropriate values
-func evalVars(check *string, address string, port int) bool {
-	if strings.Contains(*check, "{PORT}") && port == 0 {
+func evalVars(check *string, address string, port string) bool {
+	if strings.Contains(*check, "{PORT}") && port == "0" {
 		logging.Error.Println("Invalid port for substitution in healthcheck", *check, port)
 		return false
 	}
 	*check = strings.Replace(*check, "{IP}", address, -1)
-	*check = strings.Replace(*check, "{PORT}", strconv.Itoa(port), -1)
+	*check = strings.Replace(*check, "{PORT}", port, -1)
 	return true
+}
+
+// getAddress attempts to discover a tasks address based on a list of ip sources
+// you can think of it as similar functionality to nsswitch
+func getAddress(task state.Task, ipsources []string, slaveip string) string {
+
+	var address string
+	for _, lookup := range ipsources {
+		lookupkey := strings.Split(lookup, ":")
+		switch lookupkey[0] {
+		case "mesos":
+			address = task.IP("mesos")
+		case "docker":
+			address = task.IP("docker")
+		case "netinfo":
+			address = task.IP("netinfo")
+		case "host":
+			address = task.IP("host")
+		case "label":
+			if len(lookupkey) != 2 {
+				logging.Error.Fatal("Lookup order label is not in proper format `label:labelname`")
+				continue
+			}
+
+			addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
+			if len(addresses) > 0 {
+				address = addresses[0]
+			}
+
+			// CUSTOM
+			// Since we add the calicodocker label after the container has started up, we'll need to do
+			// an additional check to see if we need to wait for the calico label
+			if address == "" && lookupkey[1] == "CalicoDocker.NetworkSettings.IPAddress" {
+				for _, taskLabel := range task.Labels {
+					if taskLabel.Key == "CALICO_IP" {
+						return ""
+					}
+				}
+			}
+		case "fallback":
+			address = slaveip
+		}
+
+		if address != "" {
+			break
+		}
+	}
+
+	return address
 }

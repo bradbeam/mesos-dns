@@ -1,620 +1,301 @@
 package consul
 
 import (
-	"encoding/json"
-	"errors"
-	"strconv"
+	"net"
 	"strings"
 	"sync"
+	"time"
 
 	capi "github.com/hashicorp/consul/api"
-	"github.com/mesos/mesos-go/upid"
 	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
-	"github.com/mesosphere/mesos-dns/records/state"
 )
 
-type ConsulBackend struct {
-	Agents           map[string]*capi.Agent
-	AgentPort        string
-	Client           *capi.Client
-	Config           *Config
-	Count            int
-	IPSources        []string
-	Refresh          int
-	ServicePrefix    string
-	SlaveIDIP        map[string]string
-	SlaveIPID        map[string]string
-	SlaveIDHostname  map[string]string
-	SlaveHostnameID  map[string]string
-	State            state.State
-	FrameworkRecords map[string]*ConsulRecords
-	MesosRecords     map[string]*ConsulRecords
-	TaskRecords      map[string]*ConsulRecords
-	HealthChecks     map[string]*ConsulChecks
-	ConsulServices   map[string]*ConsulRecords
+type Backend struct {
+	Agents          map[string]chan []Record
+	Config          *Config
+	Control         map[string]chan struct{}
+	ConsulKV        chan capi.KVPairs
+	ConsulKVControl chan struct{}
+	ErrorChan       chan error
+
+	sync.Mutex
+	Cache map[string][]Record
+	count int
 }
 
-type ConsulRecords struct {
-	Current  []*capi.AgentServiceRegistration
-	Previous []*capi.AgentServiceRegistration
+type Record struct {
+	Action  string
+	Address string
+	SlaveID string
+
+	Service *capi.AgentServiceRegistration
+	Check   *capi.AgentCheckRegistration
 }
 
-type ConsulChecks struct {
-	Current  []*capi.AgentCheckRegistration
-	Previous []*capi.AgentCheckRegistration
+type Agent struct {
+	Healthy     bool
+	ConsulAgent *capi.Agent
 }
 
-type TaskCheck struct {
-	TaskID string
-	*capi.AgentCheckRegistration
+func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *Backend {
+	addr, port, err := net.SplitHostPort(config.Address)
+	if err != nil {
+		logging.Error.Println("Failed to get consul host:port info")
+		return nil
+	}
+
+	client, err := consulInit(*config, addr, port, rg.Config.RefreshSeconds)
+	if err != nil {
+		errch <- err
+		return nil
+	}
+
+	// Only get LAN members
+	members, err := client.Agent().Members(false)
+	if err != nil {
+		errch <- err
+		return nil
+	}
+
+	backend := &Backend{
+		ErrorChan: errch,
+		Agents:    make(map[string]chan []Record),
+		Cache:     make(map[string][]Record),
+		Config:    config,
+		Control:   make(map[string]chan struct{}),
+	}
+
+	kvCh := make(chan capi.KVPairs)
+	kvControlCh := make(chan struct{})
+	go pollConsulKVHC(client, config.CacheRefresh, kvCh, errch, kvControlCh)
+	backend.ConsulKV = kvCh
+	backend.ConsulKVControl = kvControlCh
+
+	// Iterate through all members and make sure connection is healthy
+	// or initialize a new connection
+	for _, member := range members {
+		recordInput := make(chan []Record)
+		backend.Agents[member.Addr] = recordInput
+		controlCh := make(chan struct{})
+		backend.Control[member.Addr] = controlCh
+		go consulAgent(member, *config, recordInput, controlCh, errch)
+	}
+
+	return backend
 }
 
-func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *ConsulBackend {
+func consulInit(config Config, addr string, port string, refresh int) (*capi.Client, error) {
 	cfg := capi.DefaultConfig()
-	cfg.Address = config.Address
+	cfg.Address = strings.Join([]string{addr, port}, ":")
 	cfg.Datacenter = config.Datacenter
 	cfg.Scheme = config.Scheme
 	cfg.Token = config.Token
+	cfg.HttpClient.Timeout = time.Second * time.Duration(refresh)
 
 	client, err := capi.NewClient(cfg)
 	if err != nil {
+		logging.Error.Println("Failed to create new consul client for", cfg.Address)
+		return nil, err
+	}
+
+	_, err = client.Agent().Self()
+	if err != nil {
+		logging.Error.Println("Failed getting self for", cfg.Address)
+		return nil, err
+	}
+
+	logging.VeryVerbose.Println("Connected to consul agent", cfg.Address)
+	return client, err
+}
+
+func consulAgent(member *capi.AgentMember, config Config, records chan []Record, control chan struct{}, errch chan error) {
+	_, port, err := net.SplitHostPort(config.Address)
+	if err != nil {
 		errch <- err
-		return &ConsulBackend{}
-	}
-
-	if config.CacheRefresh <= 0 {
-		errch <- errors.New("Cache refresh must be greater than 0")
-		return &ConsulBackend{}
-	}
-
-	// Since the consul api is dumb and wont return the http port
-	// we'll assume all agents are running on the same port as
-	// the initially specified consul server
-	port := strings.Split(config.Address, ":")[1]
-
-	ipsources := rg.Config.IPSources
-	ipsources = append(ipsources, "fallback")
-
-	return &ConsulBackend{
-		Agents:           make(map[string]*capi.Agent),
-		AgentPort:        port,
-		Client:           client,
-		Config:           config,
-		Count:            0,
-		IPSources:        ipsources,
-		Refresh:          rg.Config.RefreshSeconds,
-		ServicePrefix:    "mesos-dns",
-		SlaveIDIP:        make(map[string]string),
-		SlaveIPID:        make(map[string]string),
-		SlaveIDHostname:  make(map[string]string),
-		SlaveHostnameID:  make(map[string]string),
-		State:            state.State{},
-		FrameworkRecords: make(map[string]*ConsulRecords),
-		MesosRecords:     make(map[string]*ConsulRecords),
-		TaskRecords:      make(map[string]*ConsulRecords),
-		HealthChecks:     make(map[string]*ConsulChecks),
-		ConsulServices:   make(map[string]*ConsulRecords),
-	}
-}
-
-func (c *ConsulBackend) Reload(rg *records.RecordGenerator) {
-	c.Count++
-	// Get a snapshot of state.json
-	c.State = rg.State
-
-	// Get agent members
-	// and initialize client connections
-	err := c.connectAgents()
-	if err != nil {
-		logging.Error.Println("Failed to connect to consul agent", err)
 		return
 	}
 
-	// Generate all of the necessary records
-	c.generateMesosRecords()
-	c.generateFrameworkRecords()
-	for _, framework := range rg.State.Frameworks {
-		c.generateTaskRecords(framework.Tasks)
+	count := 0
+
+	agent := &Agent{
+		Healthy: false,
 	}
 
-	// Register records with consul
-	c.Register()
+	cache := []Record{}
 
-	// Clean up old/orphaned records
-	c.Cleanup()
-}
-
-func (c *ConsulBackend) connectAgents() error {
-	// Only get LAN members
-	members, err := c.Client.Agent().Members(false)
-	if err != nil {
-		// Do something
-		return err
-	}
-
-	for _, agent := range members {
-		logging.VeryVerbose.Println("Connecting to consul agent", agent)
-		// Test connection to each agent and reconnect as needed
-		if _, ok := c.Agents[agent.Addr]; ok {
-			_, err := c.Agents[agent.Addr].Self()
-			if err == nil {
-				logging.VeryVerbose.Println("Connected to consul agent", agent)
-				continue
-			}
-		}
-		cfg := capi.DefaultConfig()
-		cfg.Address = agent.Addr + ":" + c.AgentPort
-		cfg.Datacenter = c.Config.Datacenter
-		cfg.Scheme = c.Config.Scheme
-		cfg.Token = c.Config.Token
-
-		client, err := capi.NewClient(cfg)
-		if err != nil {
-			// How do we want to handle consul agent not being responsive
-			return err
-		}
-
-		// Do a sanity check that we are connected to agent
-		_, err = client.Agent().Self()
-		if err != nil {
-			// Dump agent?
-			return err
-		}
-
-		c.Agents[agent.Name] = client.Agent()
-		logging.VeryVerbose.Println("Connected to consul agent", agent)
-	}
-
-	return nil
-}
-
-func (c *ConsulBackend) generateMesosRecords() {
-	// Create a bogus Slave struct for the leader
-	// master@10.10.10.8:5050
-	lead := state.Slave{
-		PID: state.PID{
-			&upid.UPID{
-				Host: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[0],
-				Port: strings.Split(strings.Split(c.State.Leader, "@")[1], ":")[1],
-			},
-		},
-	}
-
-	for _, slave := range c.State.Slaves {
-		// We'll need this for service registration to the appropriate
-		// slaves
-		c.SlaveIDIP[slave.ID] = slave.PID.Host
-		c.SlaveIPID[slave.PID.Host] = slave.ID
-
-		// Pull out only the hostname, not the FQDN
-		c.SlaveIDHostname[slave.ID] = strings.Split(slave.Hostname, ".")[0]
-		c.SlaveHostnameID[strings.Split(slave.Hostname, ".")[0]] = slave.ID
-
-		tags := []string{"slave", c.SlaveIDHostname[slave.ID]}
-
-		if slave.Attrs.Master == "true" {
-			tags = append(tags, "master")
-		}
-
-		if slave.PID.Host == lead.PID.Host {
-			tags = append(tags, "leader")
-		}
-
-		port, err := strconv.Atoi(slave.PID.Port)
-		if err != nil {
-			logging.Error.Println("Failed to get port for slave", slave.ID, ". Error:", err)
-			continue
-		}
-
-		// Make sure we've got everything initialized
-		if _, ok := c.MesosRecords[slave.ID]; !ok {
-			c.MesosRecords[slave.ID] = &ConsulRecords{}
-		}
-
-		c.MesosRecords[slave.ID].Current = append(c.MesosRecords[slave.ID].Current, createService(strings.Join([]string{c.ServicePrefix, slave.ID}, ":"), "mesos", slave.PID.Host, port, tags))
-		for _, rec := range c.MesosRecords[slave.ID].Current {
-			logging.VeryVerbose.Println("Mesos records:", rec.ID, "=>", rec.Address)
-		}
-
-	}
-	// This is gonna be wrong when current + previous is included I think
-	logging.Verbose.Println("Found", len(c.MesosRecords), "mesos records")
-}
-
-func (c *ConsulBackend) generateFrameworkRecords() {
-	for _, framework := range c.State.Frameworks {
-		// Skip inactive frameworks
-		if !framework.Active {
-			continue
-		}
-
-		// Pull sanitized framework host + port values
-		frameworkHost, frameworkPort := framework.HostPort()
-
-		// :(  records.hostToIP4 would be super
-		if frameworkHost == "" {
-			continue
-		}
-
-		// If no framework port is returned, we'll set it to 0 so we can still
-		// create an A record
-		if frameworkPort == "" {
-			frameworkPort = "0"
-		}
-
-		port, err := strconv.Atoi(frameworkPort)
-		if err != nil {
-			logging.Error.Println("Failed to get port (", frameworkPort, ") for framework", framework.Name, ". Error:", err)
-			continue
-		}
-
-		var slaveid string
-
-		if _, ok := c.SlaveIPID[frameworkHost]; ok {
-			slaveid = c.SlaveIPID[frameworkHost]
-		} else {
-			// Try to discover the slave that the framework is running on
-			// by comparing the hostnames
-			for id, hostname := range c.SlaveIDHostname {
-				if hostname == strings.Split(framework.Hostname, ".")[0] {
-					slaveid = id
-				}
-			}
-		}
-
-		if slaveid == "" {
-			continue
-		}
-
-		// Make sure we've got everything initialized
-		if _, ok := c.FrameworkRecords[slaveid]; !ok {
-			c.FrameworkRecords[slaveid] = &ConsulRecords{}
-		}
-
-		c.FrameworkRecords[slaveid].Current = append(c.FrameworkRecords[slaveid].Current, createService(strings.Join([]string{c.ServicePrefix, framework.Name}, ":"), framework.Name, frameworkHost, port, []string{}))
-		for _, rec := range c.FrameworkRecords[slaveid].Current {
-			logging.VeryVerbose.Println("Framework record:", rec.ID, "=>", rec.Address)
-		}
-		logging.Verbose.Println("Found", len(c.FrameworkRecords), "framework records on slave", slaveid)
-	}
-}
-
-func (c *ConsulBackend) generateTaskRecords(tasks []state.Task) {
-	for _, task := range tasks {
-		if task.State != "TASK_RUNNING" {
-			continue
-		}
-
-		// Discover task IP
-		address := c.getAddress(task)
-
-		// Determine if we need to ignore the task because there is no appropriate IP
-		if address == "" {
-			continue
-		}
-
-		// Make sure we've got everything initialized
-		if _, ok := c.TaskRecords[task.SlaveID]; !ok {
-			c.TaskRecords[task.SlaveID] = &ConsulRecords{}
-		}
-		if _, ok := c.HealthChecks[task.SlaveID]; !ok {
-			c.HealthChecks[task.SlaveID] = &ConsulChecks{}
-		}
-
-		// Create a service registration for every port
-		if len(task.Ports()) == 0 {
-			// Create a service registration for the base service
-			id := strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID}, ":")
-			c.TaskRecords[task.SlaveID].Current = append(c.TaskRecords[task.SlaveID].Current, createService(id, task.Name, address, 0, []string{c.SlaveIDHostname[task.SlaveID]}))
-			c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id, address, 0)...)
-		} else {
-			// Create a service registration for each port
-			for _, port := range task.Ports() {
-				p, err := strconv.Atoi(port)
+	for {
+		if count%(config.CacheRefresh*3) == 0 {
+			if !agent.Healthy {
+				logging.VeryVerbose.Println("Reconnecting to consul at", member.Addr, port)
+				client, err := consulInit(config, member.Addr, port, 5)
 				if err != nil {
-					logging.Error.Println("Failed to get port for task", task.ID, ", Skipping. Error:", err)
+					errch <- err
+					time.Sleep(1 * time.Second)
 					continue
 				}
-				id := strings.Join([]string{c.ServicePrefix, c.SlaveIDHostname[task.SlaveID], task.ID, port}, ":")
-				c.TaskRecords[task.SlaveID].Current = append(c.TaskRecords[task.SlaveID].Current, createService(id, task.Name, address, p, []string{c.SlaveIDHostname[task.SlaveID]}))
-				c.HealthChecks[task.SlaveID].Current = append(c.HealthChecks[task.SlaveID].Current, c.getHealthChecks(task, id, address, p)...)
+				agent.Healthy = true
+				agent.ConsulAgent = client.Agent()
+				cache = []Record{}
 			}
 		}
-		for _, rec := range c.TaskRecords[task.SlaveID].Current {
-			logging.VeryVerbose.Println("Task record", rec.ID, "=>", rec.Address)
-		}
-		for _, rec := range c.HealthChecks[task.SlaveID].Current {
-			logging.VeryVerbose.Println("Health check record", rec.ID, "=>", rec.Name, "/", rec.ServiceID)
-		}
-		logging.Verbose.Println("Found", len(c.TaskRecords[task.SlaveID].Current), "task records on slave", task.SlaveID)
-		logging.Verbose.Println("Found", len(c.HealthChecks[task.SlaveID].Current), "health check records on slave", task.SlaveID)
-	}
-}
 
-func (c *ConsulBackend) Register() {
+		select {
+		case recordSet := <-records:
+			// Get Delta records to add
+			delta := getDeltaRecords(cache, recordSet, "add")
+			// Get Delta records to remove
+			delta = append(delta, getDeltaRecords(recordSet, cache, "remove")...)
 
-	var wg sync.WaitGroup
+			// Rebuild cache with successful registrations
+			cache = []Record{}
 
-	for agentid, _ := range c.Agents {
-		// Launch a goroutine per agent
-		slaveid := c.SlaveHostnameID[agentid]
-
-		wg.Add(1)
-		go func() {
-			services := []*capi.AgentServiceRegistration{}
-
-			// May not have any records for specific slave
-			if _, ok := c.MesosRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.MesosRecords[slaveid].Previous, c.MesosRecords[slaveid].Current)...)
-			}
-			if _, ok := c.FrameworkRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.FrameworkRecords[slaveid].Previous, c.FrameworkRecords[slaveid].Current)...)
-			}
-			if _, ok := c.TaskRecords[slaveid]; ok {
-				services = append(services, getDeltaServices(c.TaskRecords[slaveid].Previous, c.TaskRecords[slaveid].Current)...)
-			}
-
-			for _, service := range services {
-				err := c.Agents[agentid].ServiceRegister(service)
-				if err != nil {
-					logging.Error.Println("Failed to register service", service.ID, "on agent", agentid, ". Error:", err)
+			for _, record := range delta {
+				// Update Consul
+				if !agent.Healthy {
+					logging.VeryVerbose.Println("Skipping record update because agent isnt healthy")
 					continue
 				}
 
-				if _, ok := c.HealthChecks[slaveid]; !ok {
-					logging.VeryVerbose.Println("No healthchecks for", service.ID, "on slave", slaveid)
-					continue
+				switch record.Action {
+				case "add":
+					if record.Service != nil {
+						logging.VeryVerbose.Println("Registering service", record.Service.ID)
+						err := agent.ConsulAgent.ServiceRegister(record.Service)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
+					}
+					if record.Check != nil {
+						logging.VeryVerbose.Println("Registering check", record.Check.ID)
+						err := agent.ConsulAgent.CheckRegister(record.Check)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
+					}
+					// Update cache with healthy records
+					cache = append(cache, record)
+				case "remove":
+					if record.Service != nil {
+						logging.VeryVerbose.Println("DeRegistering service", record.Service.ID)
+						err := agent.ConsulAgent.ServiceDeregister(record.Service.ID)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
+					}
+					if record.Check != nil {
+						logging.VeryVerbose.Println("DeRegistering check", record.Check.ID)
+						err := agent.ConsulAgent.CheckDeregister(record.Check.ID)
+						if err != nil {
+							agent.Healthy = false
+							errch <- err
+						}
+					}
 				}
-
 			}
-
-			checks := []*capi.AgentCheckRegistration{}
-			if _, ok := c.HealthChecks[slaveid]; ok {
-				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Previous, c.HealthChecks[slaveid].Current, "add")...)
-			}
-
-			for _, hc := range checks {
-				logging.VeryVerbose.Println("Registering check", hc.Name, "for service", hc.ServiceID)
-				err := c.Agents[agentid].CheckRegister(hc)
-				if err != nil {
-					logging.Error.Println("Failed to register healthcheck for service", hc.ServiceID, ". Error:", err)
-					continue
-				}
-			}
-			wg.Done()
-		}()
-		wg.Wait()
+		case <-control:
+			return
+		case <-time.After(1 * time.Second):
+			count += 1
+		}
 	}
 }
 
-func (c *ConsulBackend) Cleanup() {
+func (b *Backend) Reload(rg *records.RecordGenerator) {
+	// Data channels for generated ServiceRegistrations
+	mesosRecords := make(chan Record)
+	frameworkRecords := make(chan Record)
+	taskRecords := make(chan Record)
 
-	var wg sync.WaitGroup
+	// Metadata Channels to allow frameworks/tasks to look up
+	// various slave identification
+	mesosFrameworks := make(chan map[string]string)
+	mesosTasks := make(chan map[string]SlaveInfo)
 
-	for agentid, _ := range c.Agents {
-		// Launch a goroutine per agent
-		slaveid := c.SlaveHostnameID[agentid]
-		wg.Add(1)
-		go func() {
-			services := []*capi.AgentServiceRegistration{}
-			currentservices := []*capi.AgentServiceRegistration{}
+	b.Lock()
+	b.count++
+	b.Unlock()
 
-			for _, records := range []map[string]*ConsulRecords{c.MesosRecords, c.FrameworkRecords, c.TaskRecords} {
-				if recordGroup, ok := records[slaveid]; ok {
-					services = append(services, getDeltaServices(recordGroup.Current, recordGroup.Previous)...)
-					currentservices = append(currentservices, recordGroup.Current...)
-					recordGroup.Previous = recordGroup.Current
-					recordGroup.Current = nil
-				}
-			}
+	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
-			services = append(services, getDeltaServices(currentservices, c.getServices(agentid))...)
+	go generateMesosRecords(mesosRecords, rg, b.Config.ServicePrefix, mesosFrameworks, mesosTasks)
+	go generateFrameworkRecords(frameworkRecords, rg, b.Config.ServicePrefix, mesosFrameworks)
+	go generateTaskRecords(taskRecords, rg, b.Config.ServicePrefix, mesosTasks, b.ConsulKV)
 
-			for _, service := range services {
-				logging.VeryVerbose.Println("Removing service", service.ID, "on agent", agentid)
-				err := c.Agents[agentid].ServiceDeregister(service.ID)
-				if err != nil {
-					logging.Verbose.Println("Failed to deregister service", service.ID, "on agent", agentid, ". Falling back to catalog deregistration.")
-					logging.Error.Println("Error:", err)
-					dereg := &capi.CatalogDeregistration{
-						Node:      c.SlaveIDHostname[slaveid],
-						ServiceID: service.ID,
-					}
-					_, err = c.Client.Catalog().Deregister(dereg, nil)
-					if err != nil {
-						logging.Error.Println("Failed to deregister service from catalog", err)
-						continue
-					}
-				}
-			}
-			checks := []*capi.AgentCheckRegistration{}
-			if _, ok := c.HealthChecks[slaveid]; ok {
-				checks = append(checks, getDeltaChecks(c.HealthChecks[slaveid].Current, c.HealthChecks[slaveid].Previous, "purge")...)
-				c.HealthChecks[slaveid].Previous = c.HealthChecks[slaveid].Current
-				c.HealthChecks[slaveid].Current = nil
-			}
+}
 
-			for _, hc := range checks {
-				logging.VeryVerbose.Println("Removing", hc.ID)
-				err := c.Agents[agentid].CheckDeregister(hc.ID)
-				if err != nil {
-					logging.Verbose.Println("Failed to deregister check", hc.ID, "on agent", agentid, " . Falling back to catalog deregistration.")
-					logging.Error.Println("Error:", err)
-					dereg := &capi.CatalogDeregistration{
-						Node:    c.SlaveIDHostname[slaveid],
-						CheckID: hc.ID,
-					}
-					_, err = c.Client.Catalog().Deregister(dereg, nil)
-					if err != nil {
-						logging.Error.Println("Failed to deregister check", hc.ID, "from catalog", err)
-						continue
-					}
-				}
-			}
+func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks chan Record) {
+	consulAgent := make(map[string]chan []Record)
+	records := make(map[string][]Record)
+	slaveLookup := make(map[string]string)
 
-			c.ClearCache(slaveid)
+	// Do some additional setup/initialization
+	for record := range mesoss {
+		if ch, ok := b.Agents[record.Service.Address]; ok {
+			consulAgent[record.SlaveID] = ch
+			slaveLookup[record.Service.Address] = record.SlaveID
+		}
 
-			wg.Done()
-		}()
-		wg.Wait()
+		b.Lock()
+		if _, ok := b.Cache[record.SlaveID]; !ok {
+			b.Cache[record.SlaveID] = []Record{}
+		}
+		b.Unlock()
+
+		records[record.SlaveID] = append(records[record.SlaveID], record)
+	}
+
+	// Create []Record to send to each agent
+	// TODO find framework records
+	for record := range frameworks {
+		// We'll look up slave by IP because frameworks aren't tied to a
+		// slave :(
+		if slaveid, ok := slaveLookup[record.Address]; ok {
+			records[slaveid] = append(records[slaveid], record)
+		}
+
+		// Discard record if we cant identify a slave to associate it with
+		continue
+	}
+	for record := range tasks {
+		records[record.SlaveID] = append(records[record.SlaveID], record)
+	}
+
+	// Emit list of records to each consul agent
+	for slaveid, agentCh := range consulAgent {
+		go func(records []Record, agent chan []Record) {
+			agent <- records
+		}(records[slaveid], agentCh)
 	}
 }
 
-func (c *ConsulBackend) getAddress(task state.Task) string {
+func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, errch chan error, control chan struct{}) {
+	var kvs capi.KVPairs
+	var err error
+	ticker := time.NewTicker(time.Millisecond * 500)
+	count := 0
+	for {
+		count += 1
+		// Always send a value through to make sure we dont make tasks wait on us
 
-	var address string
-	for _, lookup := range c.IPSources {
-		lookupkey := strings.Split(lookup, ":")
-		switch lookupkey[0] {
-		case "mesos":
-			address = task.IP("mesos")
-		case "docker":
-			address = task.IP("docker")
-		case "netinfo":
-			address = task.IP("netinfo")
-		case "host":
-			address = task.IP("host")
-		case "label":
-			if len(lookupkey) != 2 {
-				logging.Error.Fatal("Lookup order label is not in proper format `label:labelname`")
-			}
-
-			addresses := state.StatusIPs(task.Statuses, state.Labels(lookupkey[1]))
-			if len(addresses) > 0 {
-				address = addresses[0]
-			}
-
-			// CUSTOM
-			// Since we add the calicodocker label after the container has started up, we'll need to do
-			// an additional check to see if we need to wait for the calico label
-			if address == "" && lookupkey[1] == "CalicoDocker.NetworkSettings.IPAddress" {
-				for _, taskLabel := range task.Labels {
-					if taskLabel.Key == "CALICO_IP" {
-						return ""
-					}
-				}
-			}
-		case "fallback":
-			address = c.SlaveIDIP[task.SlaveID]
-		}
-
-		if address != "" {
-			break
-		}
-	}
-
-	return address
-}
-
-func (c *ConsulBackend) getHealthChecks(task state.Task, id string, address string, port int) []*capi.AgentCheckRegistration {
-	// Look up KV for defined healthchecks
-	kv := c.Client.KV()
-	var hc []*capi.AgentCheckRegistration
-	for _, label := range task.Labels {
-		if label.Key != "ConsulHealthCheckKeys" {
-			continue
-		}
-		for _, endpoint := range strings.Split(label.Value, ",") {
-			pair, _, err := kv.Get("healthchecks/"+endpoint, nil)
-			// If key does not exist in consul, pair is nil
-			if pair == nil || err != nil {
-				logging.Verbose.Println("Healthcheck healthchecks/"+endpoint, "not found in consul, skipping")
-				continue
-			}
-			check := &capi.AgentCheckRegistration{}
-			err = json.Unmarshal(pair.Value, check)
+		if count%refresh == 1 {
+			kvs, _, err = client.KV().List("healthchecks/", nil)
 			if err != nil {
-				logging.Error.Println(err)
+				errch <- err
 				continue
 			}
-			check.ID = strings.Join([]string{check.ID, id}, ":")
-			check.ServiceID = id
-
-			// Now to do some variable expansion
-			// We're going to reserve `{IP}` and `{PORT}`
-			// We'll apply this to
-			// http, script, tcp
-			if check.HTTP != "" {
-				if !evalVars(&check.HTTP, address, port) {
-					continue
-				}
-			}
-			if check.Script != "" {
-				if !evalVars(&check.Script, address, port) {
-					continue
-				}
-			}
-			if check.TCP != "" {
-				if !evalVars(&check.TCP, address, port) {
-					continue
-				}
-			}
-
-			hc = append(hc, check)
-		}
-	}
-	logging.VeryVerbose.Println("Found", len(hc), "healthchecks for", id)
-
-	return hc
-
-}
-
-func (c *ConsulBackend) getServices(agentid string) []*capi.AgentServiceRegistration {
-	svcs := []*capi.AgentServiceRegistration{}
-	if c.Config.CacheOnly {
-		return svcs
-	}
-
-	if c.Count%c.Config.CacheRefresh != 0 {
-		return svcs
-	}
-
-	services, err := c.Agents[agentid].Services()
-	if err != nil {
-		logging.Error.Println("Failed to get list of services from consul@", agentid, ".", err)
-		return svcs
-	}
-
-	for _, service := range services {
-		// Filter only services we care about
-		if strings.Split(service.ID, ":")[0] != c.ServicePrefix {
-			continue
 		}
 
-		// Create ServiceRegistration structs for each service so we can compare later
-		sr := &capi.AgentServiceRegistration{
-			ID:      service.ID,
-			Name:    service.Service,
-			Tags:    service.Tags,
-			Port:    service.Port,
-			Address: service.Address,
+		select {
+		case <-control:
+			return
+		case <-ticker.C:
+			kvCh <- kvs
+			time.Sleep(time.Second * time.Duration(refresh))
 		}
-		// Make sure we've got everything initialized
-		svcs = append(svcs, sr)
-	}
 
-	return svcs
-}
-
-// ClearCache will clear out the internal cache of records causing a new cache to be built
-func (c *ConsulBackend) ClearCache(slaveid string) {
-	if c.Count%c.Config.CacheRefresh != 0 {
-		return
-	}
-
-	// Reset the counter so we dont overflow
-	c.Count = 0
-
-	// Clear our existing caches
-	logging.VeryVerbose.Println("Clearing previous record cache for slaveid", slaveid)
-	if _, ok := c.MesosRecords[slaveid]; ok {
-		c.MesosRecords[slaveid].Previous = nil
-	}
-	if _, ok := c.FrameworkRecords[slaveid]; ok {
-		c.FrameworkRecords[slaveid].Previous = nil
-	}
-	if _, ok := c.TaskRecords[slaveid]; ok {
-		c.TaskRecords[slaveid].Previous = nil
 	}
 }
