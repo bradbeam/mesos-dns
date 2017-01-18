@@ -138,6 +138,16 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 				agent.ConsulAgent = client.Agent()
 				cache = []Record{}
 			}
+
+			// Pull records from consul
+			switch config.CacheOnly {
+			case true:
+				// Drop cache
+				cache = []Record{}
+			case false:
+				// Set cache to list of services named with our prefix
+				cache = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
+			}
 		}
 
 		select {
@@ -298,4 +308,46 @@ func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, er
 		}
 
 	}
+}
+
+func agentServiceRecords(agent *capi.Agent, prefix string) []Record {
+	services, err := agent.Services()
+	if err != nil {
+		// Not worried about err checking here since this is just to be more verbose
+		name, _ := agent.NodeName()
+		logging.Error.Println("Failed to get list of services from consul@", name, ".", err)
+		return []Record{}
+	}
+
+	recs := make([]Record, len(services))
+
+	for _, service := range services {
+		// Skip services that are not owned by us
+		parts := strings.Split(service.ID, ":")
+		if parts[0] != prefix {
+			continue
+		}
+
+		// Create ServiceRegistration structs for each service so we can compare later
+		serviceRegistration := &capi.AgentServiceRegistration{
+			ID:      service.ID,
+			Name:    service.Service,
+			Tags:    service.Tags,
+			Port:    service.Port,
+			Address: service.Address,
+		}
+
+		// Create a new record for each service
+		rec := Record{
+			Action:  "",
+			Address: service.Address,
+			SlaveID: parts[1],
+			Service: serviceRegistration,
+			Check:   nil,
+		}
+
+		recs = append(recs, rec)
+	}
+
+	return recs
 }
