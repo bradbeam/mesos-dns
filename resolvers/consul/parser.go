@@ -5,6 +5,7 @@ import (
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
+	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/records/state"
 )
@@ -160,7 +161,7 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 					for _, endpoint := range strings.Split(label.Value, ",") {
 						hc, err := createHealthChecks(kvPairs, endpoint, id, address, port)
 						if err != nil {
-							// TODO something here
+							logging.Error.Println("Failed to render healthcheck for", endpoint, "skipping")
 							continue
 
 						}

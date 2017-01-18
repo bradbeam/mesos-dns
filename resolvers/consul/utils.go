@@ -2,6 +2,7 @@ package consul
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,27 +44,38 @@ func createService(id string, name string, address string, stateport string, tag
 
 func createHealthChecks(kvs capi.KVPairs, endpoint string, id string, address string, port string) (*capi.AgentCheckRegistration, error) {
 	check := &capi.AgentCheckRegistration{}
+	var err error
+
+	// Find the KV pair we need
 	for _, kv := range kvs {
 		if kv.Key != "healthchecks/"+endpoint {
 			continue
 		}
 
-		err := json.Unmarshal(kv.Value, check)
+		err = json.Unmarshal(kv.Value, check)
 		if err != nil {
-			return check, err
+			break
 		}
+
 		check.ID = strings.Join([]string{check.ID, id}, ":")
 		check.ServiceID = id
 
 		// Now to do some variable expansion
 		// We're going to reserve `{IP}` and `{PORT}`
-		// We'll apply this to
-		// http, script, tcp
-		for _, healthCheck := range []string{check.HTTP, check.TCP, check.Script} {
-			if healthCheck != "" {
-				evalVars(&healthCheck, address, port)
-			}
+		// We'll apply this to http, script, tcp
+		if check.HTTP != "" {
+			check.HTTP, err = evalVars(check.HTTP, address, port)
 		}
+		if check.TCP != "" {
+			check.TCP, err = evalVars(check.TCP, address, port)
+		}
+		if check.Script != "" {
+			check.Script, err = evalVars(check.Script, address, port)
+		}
+
+		// We've found the appropriate KV pairs and have
+		// generated our agent check registration
+		break
 	}
 
 	return check, nil
@@ -192,14 +204,13 @@ func getDeltaChecks(oldchecks []Record, newchecks []Record, action string) []Rec
 
 // evalVars does the translation of {PORT} and {IP} variables in a defined consul healthcheck
 // with their appropriate values
-func evalVars(check *string, address string, port string) bool {
-	if strings.Contains(*check, "{PORT}") && port == "0" {
-		logging.Error.Println("Invalid port for substitution in healthcheck", *check, port)
-		return false
+func evalVars(check string, address string, port string) (string, error) {
+	if strings.Contains(check, "{PORT}") && port == "0" {
+		return check, errors.New("Invalid port for substitution in healthcheck " + check + port)
 	}
-	*check = strings.Replace(*check, "{IP}", address, -1)
-	*check = strings.Replace(*check, "{PORT}", port, -1)
-	return true
+
+	// Replace both {PORT} and {IP}
+	return strings.Replace(strings.Replace(check, "{PORT}", port, -1), "{IP}", address, -1), nil
 }
 
 // getAddress attempts to discover a tasks address based on a list of ip sources
