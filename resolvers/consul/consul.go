@@ -34,8 +34,9 @@ type Record struct {
 }
 
 type Agent struct {
-	Healthy     bool
-	ConsulAgent *capi.Agent
+	Healthy      bool
+	ConsulAgent  *capi.Agent
+	CacheUpdated bool
 }
 
 func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *Backend {
@@ -140,25 +141,29 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 			}
 
 			// Pull records from consul
-			switch config.CacheOnly {
-			case true:
-				// Drop cache
-				cache = []Record{}
-			case false:
-				// Set cache to list of services named with our prefix
-				cache = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
+			if !agent.CacheUpdated {
+				switch config.CacheOnly {
+				case true:
+					// Drop cache
+					cache = []Record{}
+				case false:
+					// Set cache to list of services named with our prefix
+					cache = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
+				}
+				agent.CacheUpdated = true
 			}
 		}
 
 		select {
 		case recordSet := <-records:
+			agent.CacheUpdated = false
 			// Get Delta records to add
 			delta := getDeltaRecords(cache, recordSet, "add")
 			// Get Delta records to remove
 			delta = append(delta, getDeltaRecords(recordSet, cache, "remove")...)
 
 			// Rebuild cache with successful registrations
-			cache = []Record{}
+			newcache := []Record{}
 
 			for _, record := range delta {
 				// Update Consul
@@ -186,7 +191,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 						}
 					}
 					// Update cache with healthy records
-					cache = append(cache, record)
+					newcache = append(newcache, record)
 				case "remove":
 					if record.Service != nil {
 						logging.VeryVerbose.Println("DeRegistering service", record.Service.ID)
@@ -205,11 +210,16 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 						}
 					}
 				}
+
+				if len(newcache) > 0 {
+					cache = newcache
+				}
 			}
+
+			count += 1
 		case <-control:
 			return
 		case <-time.After(1 * time.Second):
-			count += 1
 		}
 	}
 }
@@ -259,7 +269,6 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	}
 
 	// Create []Record to send to each agent
-	// TODO find framework records
 	for record := range frameworks {
 		// We'll look up slave by IP because frameworks aren't tied to a
 		// slave :(
@@ -339,7 +348,6 @@ func agentServiceRecords(agent *capi.Agent, prefix string) []Record {
 
 		// Create a new record for each service
 		rec := Record{
-			Action:  "",
 			Address: service.Address,
 			SlaveID: parts[1],
 			Service: serviceRegistration,

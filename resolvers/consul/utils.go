@@ -12,9 +12,9 @@ import (
 	"github.com/mesosphere/mesos-dns/records/state"
 )
 
-// createService will create an appropriately formatted AgentServiceRegistration record.
+// CreateService will create an appropriately formatted AgentServiceRegistration record.
 // This includes the removal of underscores ("_") and translation of slashes ("/") to dashes ("-")
-func createService(id string, name string, address string, stateport string, tags []string) *capi.AgentServiceRegistration {
+func CreateService(id string, name string, address string, stateport string, tags []string) *capi.AgentServiceRegistration {
 	// Format the name appropriately
 	reg, err := regexp.Compile("[^\\w-]")
 	if err != nil {
@@ -78,7 +78,7 @@ func createHealthChecks(kvs capi.KVPairs, endpoint string, id string, address st
 		break
 	}
 
-	return check, nil
+	return check, err
 }
 
 // compareService is a deep comparison of two AgentServiceRegistrations to determine if they are the same
