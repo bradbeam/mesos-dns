@@ -125,7 +125,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 	cache := []Record{}
 
 	for {
-		if count%(config.CacheRefresh*3) == 0 {
+		if count%config.CacheRefresh == 0 {
 			if !agent.Healthy {
 				logging.VeryVerbose.Println("Reconnecting to consul at", member.Addr, port)
 				client, err := consulInit(config, member.Addr, port, 5)

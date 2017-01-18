@@ -111,13 +111,6 @@ func TestDispatch(t *testing.T) {
 		}
 	}(errch)
 
-	/*
-		mesosCh := make(chan consul.Record)
-		frameworkCh := make(chan consul.Record)
-		taskCh := make(chan consul.Record)
-		counter := 0
-	*/
-
 	kvs := setupHealthChecks(t, server.HTTPAddr)
 	if kvs == nil {
 		t.Fatal("Failed to get KVPairs from consul")
@@ -184,14 +177,6 @@ func TestDispatch(t *testing.T) {
 			t.Log(v)
 		}
 	}
-
-	/*
-		t.Log("Checking cache")
-		if len(backend.Cache) == 0 {
-			t.Error("Backend cache does not have items in it after reload")
-			t.Logf("%+v", backend.Cache)
-		}
-	*/
 
 	// This should be noop since we'll hit the cache
 	backend.Reload(rg)
