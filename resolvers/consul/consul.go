@@ -60,16 +60,15 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	}
 
 	backend := &Backend{
-		ErrorChan: errch,
-		Agents:    make(map[string]chan []Record),
-		Cache:     make(map[string][]Record),
-		Config:    config,
-		Control:   make(map[string]chan struct{}),
+		Agents:  make(map[string]chan []Record),
+		Cache:   make(map[string][]Record),
+		Config:  config,
+		Control: make(map[string]chan struct{}),
 	}
 
 	kvCh := make(chan capi.KVPairs)
 	kvControlCh := make(chan struct{})
-	go pollConsulKVHC(client, config.CacheRefresh, kvCh, errch, kvControlCh)
+	go pollConsulKVHC(client, config.CacheRefresh, kvCh, kvControlCh)
 	backend.ConsulKV = kvCh
 	backend.ConsulKVControl = kvControlCh
 
@@ -131,7 +130,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 				logging.VeryVerbose.Println("Reconnecting to consul at", member.Addr, port)
 				client, err := consulInit(config, member.Addr, port, 5)
 				if err != nil {
-					errch <- err
+					logging.Error.Println("Failed to reconnect to consul agent", member.Addr, port)
 					time.Sleep(1 * time.Second)
 					continue
 				}
@@ -156,7 +155,10 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 
 		select {
 		case recordSet := <-records:
+			// Reset cache updated state
 			agent.CacheUpdated = false
+			count += 1
+
 			// Get Delta records to add
 			delta := getDeltaRecords(cache, recordSet, "add")
 			// Get Delta records to remove
@@ -179,7 +181,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 						err := agent.ConsulAgent.ServiceRegister(record.Service)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to register service", record.Service.ID)
 						}
 					}
 					if record.Check != nil {
@@ -187,26 +189,26 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 						err := agent.ConsulAgent.CheckRegister(record.Check)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to register check", record.Check.ID)
 						}
 					}
 					// Update cache with healthy records
 					newcache = append(newcache, record)
 				case "remove":
 					if record.Service != nil {
-						logging.VeryVerbose.Println("DeRegistering service", record.Service.ID)
+						logging.VeryVerbose.Println("Deregistering service", record.Service.ID)
 						err := agent.ConsulAgent.ServiceDeregister(record.Service.ID)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to deregister service", record.Service.ID)
 						}
 					}
 					if record.Check != nil {
-						logging.VeryVerbose.Println("DeRegistering check", record.Check.ID)
+						logging.VeryVerbose.Println("Deregistering check", record.Check.ID)
 						err := agent.ConsulAgent.CheckDeregister(record.Check.ID)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to deregister check", record.Check.ID)
 						}
 					}
 				}
@@ -216,7 +218,6 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 				}
 			}
 
-			count += 1
 		case <-control:
 			return
 		case <-time.After(1 * time.Second):
@@ -291,7 +292,7 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	}
 }
 
-func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, errch chan error, control chan struct{}) {
+func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, control chan struct{}) {
 	var kvs capi.KVPairs
 	var err error
 	ticker := time.NewTicker(time.Millisecond * 500)
@@ -303,7 +304,7 @@ func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, er
 		if count%refresh == 1 {
 			kvs, _, err = client.KV().List("healthchecks/", nil)
 			if err != nil {
-				errch <- err
+				logging.Error.Println("Failed to load consul KV healthchecks", err)
 				continue
 			}
 		}
