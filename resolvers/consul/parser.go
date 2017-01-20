@@ -5,6 +5,7 @@ import (
 
 	capi "github.com/hashicorp/consul/api"
 	"github.com/mesos/mesos-go/upid"
+	"github.com/mesosphere/mesos-dns/logging"
 	"github.com/mesosphere/mesos-dns/records"
 	"github.com/mesosphere/mesos-dns/records/state"
 )
@@ -57,7 +58,7 @@ func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix st
 			tags = append(tags, "leader")
 		}
 
-		record.Service = createService(strings.Join([]string{prefix, slave.ID}, ":"), "mesos", slave.PID.Host, slave.PID.Port, tags)
+		record.Service = CreateService(strings.Join([]string{prefix, slave.ID}, ":"), "mesos", slave.PID.Host, slave.PID.Port, tags)
 
 		ch <- record
 	}
@@ -88,7 +89,7 @@ func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefi
 			continue
 		}
 
-		record.Service = createService(strings.Join([]string{prefix, framework.Name}, ":"), framework.Name, frameworkHost, frameworkPort, []string{})
+		record.Service = CreateService(strings.Join([]string{prefix, framework.Name}, ":"), framework.Name, frameworkHost, frameworkPort, []string{})
 
 		ch <- record
 	}
@@ -142,7 +143,7 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 
 				id := strings.Join([]string{prefix, task.SlaveID, task.ID, port}, ":")
 				// Need to get slave hostname to add as tag
-				record.Service = createService(id, task.Name, address, port, tags)
+				record.Service = CreateService(id, task.Name, address, port, tags)
 				ch <- record
 
 				// Look up any defined HC's in consul based on task labels
@@ -160,7 +161,7 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 					for _, endpoint := range strings.Split(label.Value, ",") {
 						hc, err := createHealthChecks(kvPairs, endpoint, id, address, port)
 						if err != nil {
-							// TODO something here
+							logging.Error.Println("Failed to render healthcheck for", endpoint, "skipping")
 							continue
 
 						}

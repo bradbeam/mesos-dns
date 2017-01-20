@@ -34,8 +34,9 @@ type Record struct {
 }
 
 type Agent struct {
-	Healthy     bool
-	ConsulAgent *capi.Agent
+	Healthy      bool
+	ConsulAgent  *capi.Agent
+	CacheUpdated bool
 }
 
 func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *Backend {
@@ -59,16 +60,15 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	}
 
 	backend := &Backend{
-		ErrorChan: errch,
-		Agents:    make(map[string]chan []Record),
-		Cache:     make(map[string][]Record),
-		Config:    config,
-		Control:   make(map[string]chan struct{}),
+		Agents:  make(map[string]chan []Record),
+		Cache:   make(map[string][]Record),
+		Config:  config,
+		Control: make(map[string]chan struct{}),
 	}
 
 	kvCh := make(chan capi.KVPairs)
 	kvControlCh := make(chan struct{})
-	go pollConsulKVHC(client, config.CacheRefresh, kvCh, errch, kvControlCh)
+	go pollConsulKVHC(client, config.CacheRefresh, kvCh, kvControlCh)
 	backend.ConsulKV = kvCh
 	backend.ConsulKVControl = kvControlCh
 
@@ -125,12 +125,12 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 	cache := []Record{}
 
 	for {
-		if count%(config.CacheRefresh*3) == 0 {
+		if count%config.CacheRefresh == 0 {
 			if !agent.Healthy {
 				logging.VeryVerbose.Println("Reconnecting to consul at", member.Addr, port)
 				client, err := consulInit(config, member.Addr, port, 5)
 				if err != nil {
-					errch <- err
+					logging.Error.Println("Failed to reconnect to consul agent", member.Addr, port)
 					time.Sleep(1 * time.Second)
 					continue
 				}
@@ -138,17 +138,34 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 				agent.ConsulAgent = client.Agent()
 				cache = []Record{}
 			}
+
+			// Pull records from consul
+			if !agent.CacheUpdated {
+				switch config.CacheOnly {
+				case true:
+					// Drop cache
+					cache = []Record{}
+				case false:
+					// Set cache to list of services named with our prefix
+					cache = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
+				}
+				agent.CacheUpdated = true
+			}
 		}
 
 		select {
 		case recordSet := <-records:
+			// Reset cache updated state
+			agent.CacheUpdated = false
+			count += 1
+
 			// Get Delta records to add
 			delta := getDeltaRecords(cache, recordSet, "add")
 			// Get Delta records to remove
 			delta = append(delta, getDeltaRecords(recordSet, cache, "remove")...)
 
 			// Rebuild cache with successful registrations
-			cache = []Record{}
+			newcache := []Record{}
 
 			for _, record := range delta {
 				// Update Consul
@@ -164,7 +181,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 						err := agent.ConsulAgent.ServiceRegister(record.Service)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to register service", record.Service.ID)
 						}
 					}
 					if record.Check != nil {
@@ -172,34 +189,38 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 						err := agent.ConsulAgent.CheckRegister(record.Check)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to register check", record.Check.ID)
 						}
 					}
 					// Update cache with healthy records
-					cache = append(cache, record)
+					newcache = append(newcache, record)
 				case "remove":
 					if record.Service != nil {
-						logging.VeryVerbose.Println("DeRegistering service", record.Service.ID)
+						logging.VeryVerbose.Println("Deregistering service", record.Service.ID)
 						err := agent.ConsulAgent.ServiceDeregister(record.Service.ID)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to deregister service", record.Service.ID)
 						}
 					}
 					if record.Check != nil {
-						logging.VeryVerbose.Println("DeRegistering check", record.Check.ID)
+						logging.VeryVerbose.Println("Deregistering check", record.Check.ID)
 						err := agent.ConsulAgent.CheckDeregister(record.Check.ID)
 						if err != nil {
 							agent.Healthy = false
-							errch <- err
+							logging.Error.Println("Failed to deregister check", record.Check.ID)
 						}
 					}
 				}
+
+				if len(newcache) > 0 {
+					cache = newcache
+				}
 			}
+
 		case <-control:
 			return
 		case <-time.After(1 * time.Second):
-			count += 1
 		}
 	}
 }
@@ -249,7 +270,6 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	}
 
 	// Create []Record to send to each agent
-	// TODO find framework records
 	for record := range frameworks {
 		// We'll look up slave by IP because frameworks aren't tied to a
 		// slave :(
@@ -272,7 +292,7 @@ func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks cha
 	}
 }
 
-func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, errch chan error, control chan struct{}) {
+func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, control chan struct{}) {
 	var kvs capi.KVPairs
 	var err error
 	ticker := time.NewTicker(time.Millisecond * 500)
@@ -284,7 +304,7 @@ func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, er
 		if count%refresh == 1 {
 			kvs, _, err = client.KV().List("healthchecks/", nil)
 			if err != nil {
-				errch <- err
+				logging.Error.Println("Failed to load consul KV healthchecks", err)
 				continue
 			}
 		}
@@ -298,4 +318,45 @@ func pollConsulKVHC(client *capi.Client, refresh int, kvCh chan capi.KVPairs, er
 		}
 
 	}
+}
+
+func agentServiceRecords(agent *capi.Agent, prefix string) []Record {
+	services, err := agent.Services()
+	if err != nil {
+		// Not worried about err checking here since this is just to be more verbose
+		name, _ := agent.NodeName()
+		logging.Error.Println("Failed to get list of services from consul@", name, ".", err)
+		return []Record{}
+	}
+
+	recs := make([]Record, len(services))
+
+	for _, service := range services {
+		// Skip services that are not owned by us
+		parts := strings.Split(service.ID, ":")
+		if parts[0] != prefix {
+			continue
+		}
+
+		// Create ServiceRegistration structs for each service so we can compare later
+		serviceRegistration := &capi.AgentServiceRegistration{
+			ID:      service.ID,
+			Name:    service.Service,
+			Tags:    service.Tags,
+			Port:    service.Port,
+			Address: service.Address,
+		}
+
+		// Create a new record for each service
+		rec := Record{
+			Address: service.Address,
+			SlaveID: parts[1],
+			Service: serviceRegistration,
+			Check:   nil,
+		}
+
+		recs = append(recs, rec)
+	}
+
+	return recs
 }

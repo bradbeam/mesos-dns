@@ -3,6 +3,7 @@ package consul_test
 import (
 	"encoding/json"
 	"io/ioutil"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -98,7 +99,7 @@ func TestDispatch(t *testing.T) {
 
 	config := &consul.Config{
 		Address:       server.HTTPAddr,
-		CacheRefresh:  2,
+		CacheRefresh:  3,
 		ServicePrefix: "mesos-dns",
 	}
 
@@ -110,13 +111,6 @@ func TestDispatch(t *testing.T) {
 			}
 		}
 	}(errch)
-
-	/*
-		mesosCh := make(chan consul.Record)
-		frameworkCh := make(chan consul.Record)
-		taskCh := make(chan consul.Record)
-		counter := 0
-	*/
 
 	kvs := setupHealthChecks(t, server.HTTPAddr)
 	if kvs == nil {
@@ -185,17 +179,69 @@ func TestDispatch(t *testing.T) {
 		}
 	}
 
-	/*
-		t.Log("Checking cache")
-		if len(backend.Cache) == 0 {
-			t.Error("Backend cache does not have items in it after reload")
-			t.Logf("%+v", backend.Cache)
+	// Test variable substitution
+	t.Log("Checking variable substituion for checks")
+	for _, hc := range checks {
+		if strings.Contains(hc.Output, "{IP}") {
+			t.Error("Failed to substitute consul KV for {IP}", hc.Output)
 		}
-	*/
+		if strings.Contains(hc.Output, "{PORT}") {
+			t.Error("Failed to substitute consul KV for {PORT}", hc.Output)
+		}
+	}
 
 	// This should be noop since we'll hit the cache
 	backend.Reload(rg)
 	time.Sleep(5 * time.Second)
+
+	t.Log("Test cache refresh")
+	// Create 2 bogus Services - one to remove, one to persist
+	service := consul.CreateService("REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.2", "0", []string{})
+	err = client.Agent().ServiceRegister(service)
+	if err != nil {
+		t.Error("Failed to create bogus service", err)
+	}
+
+	service = consul.CreateService(config.ServicePrefix+":REMOVEMESERVICE", "REMOVEMESERVICE", "127.0.0.3", "0", []string{})
+	err = client.Agent().ServiceRegister(service)
+	if err != nil {
+		t.Error("Failed to create bogus service", err)
+	}
+
+	services, err = client.Agent().Services()
+	if err != nil {
+		t.Error(err)
+	}
+	if len(services) != 8 {
+		t.Error("Failed to get back 8 services from consul")
+		for k, v := range services {
+			t.Log(k)
+			t.Log(v)
+		}
+	}
+
+	// Since this is the second time calling backend.Reload(), it should trigger a cache refresh
+	backend.Reload(rg)
+	time.Sleep(5 * time.Second)
+	// And then purge
+	backend.Reload(rg)
+	time.Sleep(5 * time.Second)
+	// Note, the above seems super clunky, but I dont have way to check that Reload is done and all
+	// records have been updated. Possibly a TODO for later to think of how to better implement a
+	// status like method for the agent? Or maybe a special Record entry with action = status?
+
+	t.Log("Checking cleaned up services in consul")
+	services, err = client.Agent().Services()
+	if err != nil {
+		t.Error(err)
+	}
+	if len(services) != 7 {
+		t.Error("Failed to get back 7 services from consul")
+		for k, v := range services {
+			t.Log(k)
+			t.Log(v)
+		}
+	}
 
 	// Cleanup -- shut down old goroutines/connections to consul
 	for _, controlCh := range backend.Control {
