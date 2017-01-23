@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ type Record struct {
 	Action  string
 	Address string
 	SlaveID string
+	Type    string
 
 	Service *capi.AgentServiceRegistration
 	Check   *capi.AgentCheckRegistration
@@ -122,7 +124,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 		Healthy: false,
 	}
 
-	cache := []Record{}
+	recordCache := &cache{}
 
 	for {
 		if count%config.CacheRefresh == 0 {
@@ -136,7 +138,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 				}
 				agent.Healthy = true
 				agent.ConsulAgent = client.Agent()
-				cache = []Record{}
+				recordCache.Records = []Record{}
 			}
 
 			// Pull records from consul
@@ -144,10 +146,12 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 				switch config.CacheOnly {
 				case true:
 					// Drop cache
-					cache = []Record{}
+					recordCache.Records = []Record{}
 				case false:
 					// Set cache to list of services named with our prefix
-					cache = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
+					// Note, we can't access the healthchecks, so
+					// we'll just readd them later
+					recordCache.Records = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
 				}
 				agent.CacheUpdated = true
 			}
@@ -160,12 +164,10 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 			count += 1
 
 			// Get Delta records to add
-			delta := getDeltaRecords(cache, recordSet, "add")
+			delta := getDeltaRecords(recordCache.Records, recordSet, "add")
 			// Get Delta records to remove
-			delta = append(delta, getDeltaRecords(recordSet, cache, "remove")...)
-
-			// Rebuild cache with successful registrations
-			newcache := []Record{}
+			delta = append(delta, getDeltaRecords(recordSet, recordCache.Records, "remove")...)
+			log.Printf("Delta: %+v", delta)
 
 			for _, record := range delta {
 				// Update Consul
@@ -176,15 +178,15 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 
 				switch record.Action {
 				case "add":
-					if record.Service != nil {
+					switch record.Type {
+					case "service":
 						logging.VeryVerbose.Println("Registering service", record.Service.ID)
 						err := agent.ConsulAgent.ServiceRegister(record.Service)
 						if err != nil {
 							agent.Healthy = false
 							logging.Error.Println("Failed to register service", record.Service.ID)
 						}
-					}
-					if record.Check != nil {
+					case "check":
 						logging.VeryVerbose.Println("Registering check", record.Check.ID)
 						err := agent.ConsulAgent.CheckRegister(record.Check)
 						if err != nil {
@@ -192,18 +194,18 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 							logging.Error.Println("Failed to register check", record.Check.ID)
 						}
 					}
-					// Update cache with healthy records
-					newcache = append(newcache, record)
+					// Update cache
+					recordCache.updateCache(record, "add")
 				case "remove":
-					if record.Service != nil {
+					switch record.Type {
+					case "service":
 						logging.VeryVerbose.Println("Deregistering service", record.Service.ID)
 						err := agent.ConsulAgent.ServiceDeregister(record.Service.ID)
 						if err != nil {
 							agent.Healthy = false
 							logging.Error.Println("Failed to deregister service", record.Service.ID)
 						}
-					}
-					if record.Check != nil {
+					case "check":
 						logging.VeryVerbose.Println("Deregistering check", record.Check.ID)
 						err := agent.ConsulAgent.CheckDeregister(record.Check.ID)
 						if err != nil {
@@ -211,16 +213,12 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 							logging.Error.Println("Failed to deregister check", record.Check.ID)
 						}
 					}
-				}
-
-				if len(newcache) > 0 {
-					cache = newcache
+					// Update cache
+					recordCache.updateCache(record, "remove")
 				}
 			}
-
 		case <-control:
 			return
-		case <-time.After(1 * time.Second):
 		}
 	}
 }
@@ -248,23 +246,17 @@ func (b *Backend) Reload(rg *records.RecordGenerator) {
 
 }
 
-func (b *Backend) Dispatch(mesoss chan Record, frameworks chan Record, tasks chan Record) {
+func (b *Backend) Dispatch(mesosRecords chan Record, frameworks chan Record, tasks chan Record) {
 	consulAgent := make(map[string]chan []Record)
 	records := make(map[string][]Record)
 	slaveLookup := make(map[string]string)
 
 	// Do some additional setup/initialization
-	for record := range mesoss {
+	for record := range mesosRecords {
 		if ch, ok := b.Agents[record.Service.Address]; ok {
 			consulAgent[record.SlaveID] = ch
 			slaveLookup[record.Service.Address] = record.SlaveID
 		}
-
-		b.Lock()
-		if _, ok := b.Cache[record.SlaveID]; !ok {
-			b.Cache[record.SlaveID] = []Record{}
-		}
-		b.Unlock()
 
 		records[record.SlaveID] = append(records[record.SlaveID], record)
 	}
@@ -351,6 +343,7 @@ func agentServiceRecords(agent *capi.Agent, prefix string) []Record {
 		rec := Record{
 			Address: service.Address,
 			SlaveID: parts[1],
+			Type:    "service",
 			Service: serviceRegistration,
 			Check:   nil,
 		}
