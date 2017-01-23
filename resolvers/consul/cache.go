@@ -3,38 +3,41 @@ package consul
 import "time"
 
 type cache struct {
-	Records []Record
-	Updated time.Time
+	Records map[string]Record
+	Updated int64
 }
 
-func (c *cache) updateCache(record Record, action string) {
-	switch action {
-	case "add":
-		c.Records = append(c.Records, record)
-	case "remove":
-		for index, rec := range c.Records {
-			if record.Type != rec.Type {
-				continue
-			}
-
-			switch record.Type {
-			case "service":
-				if rec.Service.ID == record.Service.ID {
-					// Weird-ish way of deleting an item from a slice
-					// we'll create a new slice and append all the
-					// elements with an index > element we remove
-					c.Records = append(c.Records[:index], c.Records[index+1:]...)
-					c.Updated = time.Now()
-					break
-				}
-			case "check":
-				if rec.Check.ID == record.Check.ID {
-					c.Records = append(c.Records[:index], c.Records[index+1:]...)
-					c.Updated = time.Now()
-					break
-				}
-			}
-		}
+// UpdateCache adds or removes a record from the cache. The key
+// is the check or service ID
+func (c *cache) UpdateCache(record Record, action string) {
+	if c.Records == nil {
+		c.Records = make(map[string]Record)
 	}
 
+	var id string
+	switch record.Type {
+	case "service":
+		id = record.Service.ID
+	case "check":
+		id = record.Check.ID
+	}
+
+	switch action {
+	case "add":
+		c.Records[id] = record
+	case "remove":
+		delete(c.Records, id)
+	}
+	c.Updated = time.Now().UnixNano()
+}
+
+// CachedRecords returns a list of records that have been cached
+func (c cache) CachedRecords() []Record {
+	recs := make([]Record, len(c.Records))
+
+	for _, record := range c.Records {
+		recs = append(recs, record)
+	}
+
+	return recs
 }

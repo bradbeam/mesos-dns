@@ -37,11 +37,10 @@ type Record struct {
 }
 
 type Agent struct {
-	Address      string
-	CacheUpdated bool
-	ConsulAgent  *capi.Agent
-	Healthy      bool
-	LastUpdate   int64
+	Address     string
+	ConsulAgent *capi.Agent
+	Healthy     bool
+	LastUpdate  int64
 }
 
 func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *Backend {
@@ -153,19 +152,21 @@ func consulAgent(agent *Agent, config Config, records chan []Record, control cha
 				}
 				agent.Healthy = true
 				agent.ConsulAgent = client.Agent()
-				recordCache.Records = []Record{}
+				recordCache.Records = make(map[string]Record)
 			}
 
 			// Pull records from consul
 			switch config.CacheOnly {
 			case true:
 				// Drop cache
-				recordCache.Records = []Record{}
+				recordCache.Records = make(map[string]Record)
 			case false:
 				// Set cache to list of services named with our prefix
 				// Note, we can't access the healthchecks, so
 				// we'll just readd them later
-				recordCache.Records = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
+				for _, record := range agentServiceRecords(agent.ConsulAgent, config.ServicePrefix) {
+					recordCache.UpdateCache(record, "add")
+				}
 			}
 		}
 
@@ -174,9 +175,9 @@ func consulAgent(agent *Agent, config Config, records chan []Record, control cha
 			count += 1
 
 			// Get Delta records to add
-			delta := getDeltaRecords(recordCache.Records, recordSet, "add")
+			delta := getDeltaRecords(recordCache.CachedRecords(), recordSet, "add")
 			// Get Delta records to remove
-			delta = append(delta, getDeltaRecords(recordSet, recordCache.Records, "remove")...)
+			delta = append(delta, getDeltaRecords(recordSet, recordCache.CachedRecords(), "remove")...)
 
 			for _, record := range delta {
 				// Update Consul
@@ -204,7 +205,7 @@ func consulAgent(agent *Agent, config Config, records chan []Record, control cha
 						}
 					}
 					// Update cache
-					recordCache.updateCache(record, "add")
+					recordCache.UpdateCache(record, "add")
 				case "remove":
 					switch record.Type {
 					case "service":
@@ -223,9 +224,9 @@ func consulAgent(agent *Agent, config Config, records chan []Record, control cha
 						}
 					}
 					// Update cache
-					recordCache.updateCache(record, "remove")
+					recordCache.UpdateCache(record, "remove")
 				}
-				updateTS <- time.Now().UnixNano()
+				updateTS <- recordCache.Updated
 			}
 		case <-control:
 			return
