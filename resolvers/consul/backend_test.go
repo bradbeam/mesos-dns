@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,7 +100,7 @@ func TestDispatch(t *testing.T) {
 
 	config := &consul.Config{
 		Address:       server.HTTPAddr,
-		CacheRefresh:  3,
+		CacheRefresh:  2,
 		ServicePrefix: "mesos-dns",
 	}
 
@@ -140,10 +141,13 @@ func TestDispatch(t *testing.T) {
 		t.Error("Backend cache has items in it after initialization")
 	}
 
+	oldUpdate := atomic.LoadInt64(&backend.Updated)
 	backend.Reload(rg)
-
-	// IDK if there's a better way to wait for dispatch to do it's thing
-	time.Sleep(5 * time.Second)
+	// Since this is the first update we'll cheat
+	for oldUpdate == 0 {
+		time.Sleep(500 * time.Millisecond)
+		oldUpdate = atomic.LoadInt64(&backend.Updated)
+	}
 
 	cfg := capi.DefaultConfig()
 	cfg.Address = server.HTTPAddr
@@ -191,8 +195,15 @@ func TestDispatch(t *testing.T) {
 	}
 
 	// This should be noop since we'll hit the cache
+	oldUpdate = atomic.LoadInt64(&backend.Updated)
+
 	backend.Reload(rg)
-	time.Sleep(5 * time.Second)
+
+	newUpdate := atomic.LoadInt64(&backend.Updated)
+	// Since this is has hit the cache, we won't trigger an update
+	if newUpdate != oldUpdate {
+		t.Error("Found updates when we should have hit cache")
+	}
 
 	t.Log("Test cache refresh")
 	// Create 2 bogus Services - one to remove, one to persist
@@ -220,15 +231,13 @@ func TestDispatch(t *testing.T) {
 		}
 	}
 
-	// Since this is the second time calling backend.Reload(), it should trigger a cache refresh
-	backend.Reload(rg)
-	time.Sleep(5 * time.Second)
 	// And then purge
+	oldUpdate = atomic.LoadInt64(&backend.Updated)
 	backend.Reload(rg)
-	time.Sleep(5 * time.Second)
-	// Note, the above seems super clunky, but I dont have way to check that Reload is done and all
-	// records have been updated. Possibly a TODO for later to think of how to better implement a
-	// status like method for the agent? Or maybe a special Record entry with action = status?
+	for newUpdate == oldUpdate {
+		time.Sleep(500 * time.Millisecond)
+		newUpdate = atomic.LoadInt64(&backend.Updated)
+	}
 
 	t.Log("Checking cleaned up services in consul")
 	services, err = client.Agent().Services()

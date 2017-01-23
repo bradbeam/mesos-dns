@@ -99,7 +99,8 @@ func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefi
 }
 
 func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]SlaveInfo, consulKV chan capi.KVPairs) {
-	ipsources := rg.Config.IPSources
+	ipsources := make([]string, len(rg.Config.IPSources)+1)
+	ipsources = append(ipsources, rg.Config.IPSources...)
 	ipsources = append(ipsources, "fallback")
 
 	// Get slaveid => hostname

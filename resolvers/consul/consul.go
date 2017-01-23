@@ -1,10 +1,10 @@
 package consul
 
 import (
-	"log"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	capi "github.com/hashicorp/consul/api"
@@ -19,6 +19,7 @@ type Backend struct {
 	ConsulKV        chan capi.KVPairs
 	ConsulKVControl chan struct{}
 	ErrorChan       chan error
+	Updated         int64
 
 	sync.Mutex
 	Cache map[string][]Record
@@ -36,9 +37,11 @@ type Record struct {
 }
 
 type Agent struct {
-	Healthy      bool
-	ConsulAgent  *capi.Agent
+	Address      string
 	CacheUpdated bool
+	ConsulAgent  *capi.Agent
+	Healthy      bool
+	LastUpdate   int64
 }
 
 func New(config *Config, errch chan error, rg *records.RecordGenerator, version string) *Backend {
@@ -74,6 +77,18 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 	backend.ConsulKV = kvCh
 	backend.ConsulKVControl = kvControlCh
 
+	// This next bit is primarily used for testing to verify that we've gone through
+	// and updated records
+	updateTS := make(chan int64)
+	go func(ts chan int64) {
+		for {
+			select {
+			case timestamp := <-ts:
+				atomic.StoreInt64(&backend.Updated, timestamp)
+			}
+		}
+	}(updateTS)
+
 	// Iterate through all members and make sure connection is healthy
 	// or initialize a new connection
 	for _, member := range members {
@@ -81,7 +96,11 @@ func New(config *Config, errch chan error, rg *records.RecordGenerator, version 
 		backend.Agents[member.Addr] = recordInput
 		controlCh := make(chan struct{})
 		backend.Control[member.Addr] = controlCh
-		go consulAgent(member, *config, recordInput, controlCh, errch)
+		agent := &Agent{
+			Healthy: false,
+			Address: member.Addr,
+		}
+		go consulAgent(agent, *config, recordInput, controlCh, errch, updateTS)
 	}
 
 	return backend
@@ -111,7 +130,7 @@ func consulInit(config Config, addr string, port string, refresh int) (*capi.Cli
 	return client, err
 }
 
-func consulAgent(member *capi.AgentMember, config Config, records chan []Record, control chan struct{}, errch chan error) {
+func consulAgent(agent *Agent, config Config, records chan []Record, control chan struct{}, errch chan error, updateTS chan int64) {
 	_, port, err := net.SplitHostPort(config.Address)
 	if err != nil {
 		errch <- err
@@ -120,19 +139,15 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 
 	count := 0
 
-	agent := &Agent{
-		Healthy: false,
-	}
-
 	recordCache := &cache{}
 
 	for {
 		if count%config.CacheRefresh == 0 {
 			if !agent.Healthy {
-				logging.VeryVerbose.Println("Reconnecting to consul at", member.Addr, port)
-				client, err := consulInit(config, member.Addr, port, 5)
+				logging.VeryVerbose.Println("Reconnecting to consul at", agent.Address, port)
+				client, err := consulInit(config, agent.Address, port, 5)
 				if err != nil {
-					logging.Error.Println("Failed to reconnect to consul agent", member.Addr, port)
+					logging.Error.Println("Failed to reconnect to consul agent", agent.Address, port)
 					time.Sleep(1 * time.Second)
 					continue
 				}
@@ -142,32 +157,26 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 			}
 
 			// Pull records from consul
-			if !agent.CacheUpdated {
-				switch config.CacheOnly {
-				case true:
-					// Drop cache
-					recordCache.Records = []Record{}
-				case false:
-					// Set cache to list of services named with our prefix
-					// Note, we can't access the healthchecks, so
-					// we'll just readd them later
-					recordCache.Records = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
-				}
-				agent.CacheUpdated = true
+			switch config.CacheOnly {
+			case true:
+				// Drop cache
+				recordCache.Records = []Record{}
+			case false:
+				// Set cache to list of services named with our prefix
+				// Note, we can't access the healthchecks, so
+				// we'll just readd them later
+				recordCache.Records = agentServiceRecords(agent.ConsulAgent, config.ServicePrefix)
 			}
 		}
 
 		select {
 		case recordSet := <-records:
-			// Reset cache updated state
-			agent.CacheUpdated = false
 			count += 1
 
 			// Get Delta records to add
 			delta := getDeltaRecords(recordCache.Records, recordSet, "add")
 			// Get Delta records to remove
 			delta = append(delta, getDeltaRecords(recordSet, recordCache.Records, "remove")...)
-			log.Printf("Delta: %+v", delta)
 
 			for _, record := range delta {
 				// Update Consul
@@ -216,6 +225,7 @@ func consulAgent(member *capi.AgentMember, config Config, records chan []Record,
 					// Update cache
 					recordCache.updateCache(record, "remove")
 				}
+				updateTS <- time.Now().UnixNano()
 			}
 		case <-control:
 			return
