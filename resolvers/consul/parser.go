@@ -36,6 +36,7 @@ func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix st
 			Action:  "add",
 			Address: "",
 			SlaveID: slave.ID,
+			Type:    "service",
 		}
 
 		// Pull out only the hostname, not the FQDN
@@ -79,6 +80,7 @@ func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefi
 			Action:  "add",
 			Address: "",
 			SlaveID: "",
+			Type:    "service",
 		}
 
 		// Pull sanitized framework host + port values
@@ -97,7 +99,8 @@ func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefi
 }
 
 func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]SlaveInfo, consulKV chan capi.KVPairs) {
-	ipsources := rg.Config.IPSources
+	ipsources := make([]string, len(rg.Config.IPSources)+1)
+	ipsources = append(ipsources, rg.Config.IPSources...)
 	ipsources = append(ipsources, "fallback")
 
 	// Get slaveid => hostname
@@ -135,6 +138,7 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 					Action:  "add",
 					Address: address,
 					SlaveID: task.SlaveID,
+					Type:    "service",
 				}
 				var tags []string
 				if slave, ok := slaveInfo[task.SlaveID]; ok {
@@ -156,6 +160,7 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 						Action:  "add",
 						Address: address,
 						SlaveID: task.SlaveID,
+						Type:    "check",
 					}
 
 					for _, endpoint := range strings.Split(label.Value, ",") {
