@@ -252,8 +252,8 @@ func (b *Backend) Reload(rg *records.RecordGenerator) {
 	go b.Dispatch(mesosRecords, frameworkRecords, taskRecords)
 
 	go generateMesosRecords(mesosRecords, rg, b.Config.ServicePrefix, mesosFrameworks, mesosTasks)
-	go generateFrameworkRecords(frameworkRecords, rg, b.Config.ServicePrefix, mesosFrameworks)
-	go generateTaskRecords(taskRecords, rg, b.Config.ServicePrefix, mesosTasks, b.ConsulKV)
+	go generateFrameworkRecords(frameworkRecords, rg, b.Config.ServicePrefix, mesosFrameworks, b.Config.SkipInactiveFrameworks)
+	go generateTaskRecords(taskRecords, rg, b.Config.ServicePrefix, mesosTasks, b.ConsulKV, b.Config.SkipInactiveFrameworks)
 
 }
 

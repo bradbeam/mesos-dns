@@ -69,10 +69,9 @@ func generateMesosRecords(ch chan Record, rg *records.RecordGenerator, prefix st
 	close(taskInfo)
 }
 
-func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]string) {
+func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]string, skipInactiveFrameworks bool) {
 	for _, framework := range rg.State.Frameworks {
-		// Skip inactive frameworks
-		if !framework.Active {
+		if skipInactiveFrameworks && !framework.Active {
 			continue
 		}
 
@@ -98,7 +97,7 @@ func generateFrameworkRecords(ch chan Record, rg *records.RecordGenerator, prefi
 	close(ch)
 }
 
-func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]SlaveInfo, consulKV chan capi.KVPairs) {
+func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix string, mesosInfo chan map[string]SlaveInfo, consulKV chan capi.KVPairs, skipInactiveFrameworks bool) {
 	ipsources := make([]string, len(rg.Config.IPSources)+1)
 	ipsources = append(ipsources, rg.Config.IPSources...)
 	ipsources = append(ipsources, "fallback")
@@ -110,7 +109,7 @@ func generateTaskRecords(ch chan Record, rg *records.RecordGenerator, prefix str
 	kvPairs := <-consulKV
 
 	for _, framework := range rg.State.Frameworks {
-		if !framework.Active {
+		if skipInactiveFrameworks && !framework.Active {
 			continue
 		}
 
